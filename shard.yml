@@ -9,7 +9,6 @@ targets:
         main: src/ametist.cr
     movie:
         main: src/movie.cr
-        compiler_flags: -Dpreview_mt -Dexecution_context
 
 crystalline:
     main: src/ametist.cr

@@ -43,13 +43,17 @@ module Movie
 
     def dequeue
       @mutex.synchronize do
-        return nil if @first.nil?
-        value = @first.as(QueueNode(T)).value
-        @first = @first.as(QueueNode(T)).next
-        @last = nil if @first.nil?
-        @size -= 1
-        value
+        dequeue_no_lock
       end
+    end
+
+    def dequeue_no_lock
+      return nil if @first.nil?
+      value = @first.as(QueueNode(T)).value
+      @first = @first.as(QueueNode(T)).next
+      @last = nil if @first.nil?
+      @size -= 1
+      value
     end
 
     def dequeue(&)

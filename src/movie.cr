@@ -23,7 +23,7 @@ module Movie
     end
 
     def dispatch
-      @mutex.synchronize do
+      # @mutex.synchronize do
         @inbox.dequeue do |message|
           @context.on_message(message) unless message.nil?
         end
@@ -31,8 +31,9 @@ module Movie
         if @inbox.size > 0
           @dispatcher.dispatch(self)
           @scheduled = true
+          puts "Resheculing"
         end
-      end
+      # end
     end
 
     def send(message)
@@ -250,17 +251,28 @@ module Movie
     end
   end
 
+  # Utility methods for creating behaviors
+  #
+  # ctx.spawn setup do |message, context|
+  #
+  # end
+  def self.setup(factory : ActorContext(T) -> AbstractBehavior(T))  forall T
+    # Implement setup logic here
+  end
+
 end
 
 record MainMessage, message : String
 
 class Main < Movie::AbstractBehavior(MainMessage)
+  @count : Int32 = 0
   def self.create()
     new()
   end
 
   def receive(message, context)
-    puts message.message
+    puts message.message + " " + @count.to_s
+    @count += 1
   end
 end
 
@@ -276,7 +288,7 @@ class Child < Movie::AbstractBehavior(MainMessage)
   end
 
   def receive(message, context)
-    sleep(Random.new.rand(0.5..0.9))
+    # sleep(Random.new.rand(0.5..0.9))
     @parent << message
   end
 end
@@ -285,15 +297,17 @@ end
 
 system = Movie::ActorSystem(MainMessage).new(Main.create())
 main = system.spawn(Main.create())
-100.times do |i|
-  child = system.spawn(Child.create(main))
-  200.times do |j|
-    child << MainMessage.new(message: "message " + i.to_s + "-" + j.to_s)
-  end
+
+# 3000.times do |i|
+child = system.spawn(Child.create(main))
+2000000.times do |j|
+  child << MainMessage.new(message: "message ")
 end
+# end
 
 Process.on_terminate do
   # system.shutdown
 end
 
-sleep(300)
+sleep(1)
+puts "Done"
