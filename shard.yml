@@ -12,6 +12,9 @@ targets:
 
 crystalline:
     main: src/ametist.cr
+    flags:
+        - preview_mt
+        - execution_context
 
 crystal: ">= 1.18.2"
 

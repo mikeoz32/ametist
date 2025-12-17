@@ -15,6 +15,9 @@ module Movie
   #
   # TODO: implement envelopes for messages to handle metadata and priority?. (sender, priority, time_sent, time_received)
 
+  class PoolExecutionContext < Fiber::ExecutionContext::Parallel
+  end
+
   class Mailbox(T)
     @scheduled = false
     def initialize(@dispatcher : Dispatcher, @context : ActorContext(T))
@@ -23,7 +26,6 @@ module Movie
     end
 
     def dispatch
-      # @mutex.synchronize do
         @inbox.dequeue do |message|
           @context.on_message(message) unless message.nil?
         end
@@ -33,7 +35,6 @@ module Movie
           @scheduled = true
           puts "Resheculing"
         end
-      # end
     end
 
     def send(message)
