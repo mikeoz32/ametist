@@ -27,6 +27,18 @@ describe Ametist do
 
       buffer.slice_at(2).should eq Float32.slice(3.0)
     end
+
+    it "Floats also should work in dense" do
+      buffer = DenseDataBuffer(Float32).new(4, 1)
+      buffer.capacity.should eq(4)
+      buffer.append(Float32.slice(1.0))
+      buffer.append(Float32.slice(2.0))
+      buffer.append(Float32.slice(3.0))
+      buffer.append(Float32.slice(4.0))
+      buffer.capacity.should eq(8)
+
+      buffer.slice_at(2).should eq Float32.slice(3.0)
+    end
     it "And dynamic lists of floats also" do
       buffer = DataBuffer(Float32).new(4)
       buffer.capacity.should eq(4)

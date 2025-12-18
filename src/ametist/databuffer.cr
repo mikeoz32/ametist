@@ -137,7 +137,7 @@ module Ametist
 
   class DenseDataBuffer(T) < DataBuffer(T)
 
-    def initialize(capacity : Int32, @dimension : Int32)
+    def initialize(capacity : Int32, @dimension : Int32 = 1)
       super(capacity * @dimension)
       @update_strategy = UpdateStrategy::Replace
     end
