@@ -153,6 +153,10 @@ module Ametist
       append value.to_vector()
     end
 
+    def <<(value : String)
+      append value
+    end
+
 
     def update_at_append(idx : Int32, value : String)
       update_at_append idx, value.to_vector()
@@ -174,6 +178,26 @@ module Ametist
         slice = slice_at(i)
         next if slice.nil?
         yield slice, i
+      end
+    end
+
+    def append(value : Array(Float32))
+      slice = Slice(Float32).new(value.to_unsafe().as(Pointer(Float32)), value.size.as(Int))
+      append slice
+    end
+
+    def <<(value : Array(Float32))
+      append value
+    end
+
+    def vector_at(index : Int32) : Array(Float32)
+      slice = slice_at(index)
+      if slice.nil?
+        [] of Float32
+      else
+        slice.map do |value|
+          Float32.new(value)
+        end.to_a
       end
     end
 

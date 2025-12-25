@@ -105,14 +105,35 @@ module Ametist
     getter value : String | Float32 | Int32 | Array(Float32)
 
     def initialize(@name : String, @value : String | Float32 | Int32 | Array(Float32))
+      if name == "int" && !value.is_a?(Int32)
+        raise ArgumentError.new "Invalid value type for 'int' field"
+      end
+      if name == "float" && !value.is_a?(Float32)
+        raise ArgumentError.new "Invalid value type for 'float' field"
+      end
+      if name == "string" && !value.is_a?(String)
+        raise ArgumentError.new "Invalid value type for 'string' field"
+      end
+      if name == "vector" && !value.is_a?(Array(Float32))
+        raise ArgumentError.new "Invalid value type for 'vector' field"
+      end
+
     end
   end
 
   class Document
     property id : Int32
-    property fields : Array(DocumentField)
+    property fields : Hash(String, DocumentField)
 
-    def initialize(@id : Int32, @fields : Array(DocumentField))
+    def initialize(@id : Int32, fields : Array(DocumentField))
+      @fields = Hash(String, DocumentField).new
+      fields.each do |field|
+        @fields[field.name] = field
+      end
+    end
+
+    def [](name : String)
+      @fields[name].value
     end
   end
 
@@ -127,17 +148,58 @@ module Ametist
 
     def initialize(@schema : CollectionSchema)
       @schema.fields.each do |field|
+        puts field.name
         @data_buffers[field.name] = CollectionSchema.create_buffer(field)
+        puts @data_buffers[field.name]
       end
     end
 
     def add(document : Document)
-      document.fields.each do |field|
+      document.fields.values.each do |field|
         schema = @schema.fields.find { |f| f.name == field.name }
-        raise ArgumentError, "Field #{field.name} not found in schema" unless schema
-        @data_buffers[field.name] << field.value.to_slice
+        raise ArgumentError.new "Field #{field.name} not found in schema" unless schema
+        puts schema.inspect
+        puts field.name
+        puts field.value
+        puts @data_buffers[field.name]
+        if field.value.is_a?(Array(Float32))
+          @data_buffers[field.name].as(VectorBuffer).append(field.value.as(Array(Float32)))
+        elsif field.value.is_a?(Int32)
+          @data_buffers[field.name].as(DenseDataBuffer(Int32)) << Int32.slice(field.value.as(Int32))
+        elsif field.value.is_a?(Float32)
+          @data_buffers[field.name].as(DenseDataBuffer(Float32)) << Float32.slice(field.value.as(Float32))
+        elsif field.value.is_a?(String)
+          @data_buffers[field.name].as(StringBuffer) << field.value.as(String)
+        end
       end
       @size += 1
+    end
+
+    def get(index : Int32)
+
+      fields = [] of DocumentField
+      @schema.fields.each do |field|
+        buffer = @data_buffers[field.name]
+
+        value = case field.type.name
+          when "integer"
+            slice = buffer.as(DenseDataBuffer(Int32)).slice_at(index)
+            raise ArgumentError.new("Invalid value") if slice.nil?
+            slice.as(Slice(Int32))[0]
+          when "float"
+            slice = buffer.as(DenseDataBuffer(Float32)).slice_at(index)
+            raise ArgumentError.new("Invalid value") if slice.nil?
+            slice.as(Slice(Float32))[0]
+          when "string"
+            buffer.as(StringBuffer).string_at(index) || ""
+          when "vector"
+            buffer.as(VectorBuffer).vector_at(index)
+          else
+            raise ArgumentError.new("Invalid field type #{field.type.name} #{field.name}")
+        end
+        fields << DocumentField.new(field.name, value)
+      end
+      Document.new(index, fields)
     end
 
     def fields

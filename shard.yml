@@ -9,6 +9,8 @@ targets:
         main: src/ametist.cr
     movie:
         main: src/movie.cr
+    api:
+        main: src/lfapi.cr
 
 crystalline:
     main: src/ametist.cr

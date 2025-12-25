@@ -1,6 +1,11 @@
 require "fiber"
 require "./queue"
 
+require "./movie/behavior"
+require "./movie/mailbox"
+require "./movie/context"
+require "./movie/system"
+
 module Movie
   # Movie is an actor framework for Crystal
   # It is possible to build actors due to experimental execution contexts in language
@@ -16,42 +21,6 @@ module Movie
   # TODO: implement envelopes for messages to handle metadata and priority?. (sender, priority, time_sent, time_received)
 
   class PoolExecutionContext < Fiber::ExecutionContext::Parallel
-  end
-
-  class Mailbox(T)
-    @scheduled = false
-    def initialize(@dispatcher : Dispatcher, @context : ActorContext(T))
-      @inbox = Queue(T).new
-      @mutex = Mutex.new
-    end
-
-    def dispatch
-        @inbox.dequeue do |message|
-          @context.on_message(message) unless message.nil?
-        end
-        @scheduled = false
-        if @inbox.size > 0
-          @dispatcher.dispatch(self)
-          @scheduled = true
-          puts "Resheculing"
-        end
-    end
-
-    def send(message)
-        @inbox.enqueue(message)
-        @dispatcher.dispatch(self) unless @scheduled
-        @scheduled = true
-    end
-
-    def <<(message)
-      send(message)
-    end
-  end
-
-  class MailboxManager
-    def create(dispatcher, context)
-      Mailbox.new(dispatcher, context)
-    end
   end
 
   abstract class Dispatcher
@@ -105,40 +74,11 @@ module Movie
     end
   end
 
-  abstract class AbstractActorContext
+  abstract class ActorRefBase
+    abstract def send_system(message : SystemMessage)
   end
 
-  class ActorContext(T) < AbstractActorContext
-    @mailbox : Mailbox(T)?
-    def initialize(behavior : AbstractBehavior(T), ref : ActorRef(T), @system : AbstractActorSystem)
-      @behavior = behavior
-      @ref = ref
-    end
-
-    def mailbox=(mailbox : Mailbox(T))
-      @mailbox = mailbox
-    end
-
-    def tell(message : T)
-      raise "Mailbox not initialized" unless @mailbox
-      mbox = @mailbox.as(Mailbox(T))
-      mbox << message
-    end
-
-    def << (message : T)
-      tell message
-    end
-
-    def start
-      @mailbox = @system.mailboxes.create(@system.dispatchers.default, self)
-    end
-
-    def on_message(message : T)
-      @behavior.receive(message, self)
-    end
-  end
-
-  class ActorRef(T)
+  class ActorRef(T) < ActorRefBase
     getter id : Int32
 
     def initialize(@system : AbstractActorSystem)
@@ -148,15 +88,90 @@ module Movie
     def <<(message : T)
       context = @system.context @id
       raise "Context not found" if context.nil?
-      context << message
+      context.as(ActorContext(T)) << message
+    end
+
+    def send_system(message : SystemMessage)
+      context = @system.context @id
+      raise "Context not found" if context.nil?
+      context.as(ActorContext(T)).send_system_message(message)
+    end
+  end
+
+  struct RootGuardianMessage
+  end
+
+  class RootGuardian < AbstractBehavior(RootGuardianMessage)
+    def receive(message : RootGuardianMessage)
+      puts "RootGuardian received: #{message}"
+    end
+
+    def on_signal(signal : SystemMessage)
+      puts "RootGuardian received signal: #{signal}"
+    end
+  end
+
+  struct UserGuardianMessage
+  end
+
+  class UserGuardian < AbstractBehavior(UserGuardianMessage)
+    def receive(message : UserGuardianMessage)
+      puts "UserGuardian received: #{message}"
+    end
+
+    def on_signal(signal : Signal)
+      puts "UserGuardian received signal: #{signal}"
+    end
+  end
+
+  struct SystemGuardianMessage
+  end
+
+  class SystemGuardian < AbstractBehavior(SystemGuardianMessage)
+    def receive(message : SystemGuardianMessage)
+      puts "SystemGuardian received: #{message}"
+    end
+
+    def on_signal(signal : Signal)
+      puts "SystemGuardian received signal: #{signal}"
     end
   end
 
   class ActorRegistry
     @system : AbstractActorSystem?
+    @root : ActorRef(RootGuardianMessage)?
+    @user_guardian : ActorRef(UserGuardianMessage)?
+    @system_guardian : ActorRef(SystemGuardianMessage)?
     def initialize()
       @actors = {} of Int32 => AbstractActorContext
       @mutex = Mutex.new
+    end
+
+
+    def start
+      raise "System not initialized" unless @system
+
+      root_context = create_actor_context(RootGuardian.new)
+      root_ref = root_context.ref
+      @root = root_ref
+
+      system_context = create_actor_context(SystemGuardian.new)
+      user_context = create_actor_context(UserGuardian.new)
+      root_context.attach_child system_context.ref
+      root_context.attach_child user_context.ref
+      @user_guardian = user_context.ref
+      @system_guardian = system_context.ref
+    end
+
+    protected def create_actor_context(behavior : AbstractBehavior(T)) : ActorContext(T) forall T
+      raise "System not initialized" unless @system
+      ref = ActorRef(T).new(@system.as(ActorSystem))
+      context = ActorContext(T).new(behavior, ref, @system.as(AbstractActorSystem))
+      @mutex.synchronize do
+        @actors[ref.id] = context
+      end
+      context.start
+      context
     end
 
     def system=(system : AbstractActorSystem?) forall T
@@ -165,11 +180,12 @@ module Movie
 
     def spawn(behavior : AbstractBehavior(T)) : ActorRef(T) forall T
       raise "System not initialized" unless @system
-      ref = ActorRef(T).new(@system.as(ActorSystem))
-      context = ActorContext(T).new(behavior, ref, @system.as(AbstractActorSystem))
-      @actors[ref.id] = context
-      context.start
-      ref
+      raise "Root guardian not initialized" if @user_guardian.nil?
+      root_context = context(@user_guardian.as(ActorRef(UserGuardianMessage)).id)
+      raise "Root context not found" unless root_context
+      child = create_actor_context(behavior)
+      root_context.as(ActorContext(UserGuardianMessage)).attach_child(child.ref)
+      child.ref
     end
 
     def context(id : Int32)
@@ -195,7 +211,12 @@ module Movie
     def default
       # ||= is a safe way to initialize a variable only once
       # if there is no default dispatcher, create one and register it
+      # return default or return default = new
       @dispatchers["default"] ||= ParallelDispatcher.new
+    end
+
+    def internal
+      @dispatchers["internal"] ||= ParallelDispatcher.new
     end
   end
 
@@ -221,6 +242,7 @@ module Movie
       registry = ActorRegistry.new()
       system = ActorSystem(T).new(main_behavior, registry)
       system.initialize(main_behavior, registry)
+      registry.start
       system
     end
 
@@ -244,71 +266,7 @@ module Movie
     end
   end
 
-  abstract class AbstractBehavior(T)
-    def initialize()
-    end
-
-    def receive(message : T)
-    end
-  end
-
-  # Utility methods for creating behaviors
-  #
-  # ctx.spawn setup do |message, context|
-  #
-  # end
-  def self.setup(factory : ActorContext(T) -> AbstractBehavior(T))  forall T
-    # Implement setup logic here
-  end
 
 end
 
 record MainMessage, message : String
-
-class Main < Movie::AbstractBehavior(MainMessage)
-  @count : Int32 = 0
-  def self.create()
-    new()
-  end
-
-  def receive(message, context)
-    puts message.message + " " + @count.to_s
-    @count += 1
-  end
-end
-
-class Child < Movie::AbstractBehavior(MainMessage)
-  @parent : Movie::ActorRef(MainMessage)
-
-  def self.create(parent)
-    new(parent)
-  end
-
-  protected def initialize(parent)
-    @parent = parent
-  end
-
-  def receive(message, context)
-    # sleep(Random.new.rand(0.5..0.9))
-    @parent << message
-  end
-end
-
-
-
-system = Movie::ActorSystem(MainMessage).new(Main.create())
-main = system.spawn(Main.create())
-
-# 3000.times do |i|
-child = system.spawn(Child.create(main))
-2000000.times do |j|
-  child << MainMessage.new(message: "message ")
-end
-# end
-
-Process.on_terminate do
-  # system.shutdown
-end
-
-sleep(1)
-puts "Done"
