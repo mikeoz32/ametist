@@ -153,6 +153,8 @@ module Movie
       case behavior.tag
         when BehaviorTag::DEFERRED
           behavior.as(DeferredBehavior(T)).defer(self)
+        when BehaviorTag::STOPPED
+          stop
         else
           behavior
       end

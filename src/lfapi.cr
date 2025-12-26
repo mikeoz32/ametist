@@ -79,7 +79,7 @@ class HTTP::Server
 end
 
 class HTTP::Server::Context
-  getter state  = {} of String => Nil
+  property state : LF::DI::AnnotationApplicationContext?
 end
 
 module LF
@@ -208,8 +208,21 @@ module LF
              {% path = ann[0] || ann[:path] || raise "Missing path in #{method.name}" %}
              router.{{ router_method }}({{ path }}) do |ctx, _params|
                {% for arg in method.args %}
+                {% if arg.name == "request" && arg.restriction.id == "HTTP::Request" %}
+                  {{ arg.name }} = ctx.request
+                {% else %}
                  {{ puts arg.restriction }}
-                {{ arg.name }} : {{ arg.restriction }} = _params.to_t("{{ arg.name }}", {{ arg.restriction }}).as({{ arg.restriction.id }})
+                 store = ctx.store
+                 if !store.has_key?("{{ arg.name }}")
+                  if _params.has_key?("{{ arg.name }}")
+                    store = _params
+                  else
+                    raise "Missing parameter: {{ arg.name }}"
+                  end
+                 end
+                   {{ arg.name }} : {{ arg.restriction }} = store.to_t("{{ arg.name }}", {{ arg.restriction }}).as({{ arg.restriction.id }})
+                 end
+                {% end %}
                {% end %}
                ctx.response.print {{ method.name }}({% for arg in method.args %}{{ arg.name }},{% end %})
              end
@@ -273,8 +286,6 @@ module LF
     include HTTP::Handler
 
     @router : Router
-
-    @container = LF::DI::Container.new
 
     def initialize(&block : Router -> Nil)
       @router = Router.new

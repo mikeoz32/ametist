@@ -2,6 +2,7 @@ module Movie
   enum BehaviorTag
     DEFERRED
     SAME
+    STOPPED
     EXTENSIBLE
   end
 
@@ -23,6 +24,12 @@ module Movie
 
   class SameBehavior(T) < AbstractBehavior(T)
     def initialize(@tag : BehaviorTag = BehaviorTag::SAME)
+      super @tag
+    end
+  end
+
+  class StoppedBehavior(T) < AbstractBehavior(T)
+    def initialize(@tag : BehaviorTag = BehaviorTag::STOPPED)
       super @tag
     end
   end
@@ -50,6 +57,10 @@ module Movie
   module Behaviors(T)
     def self.same : SameBehavior(T)
       SameBehavior(T).new
+    end
+
+    def self.stopped : StoppedBehavior(T)
+      StoppedBehavior(T).new
     end
 
     def self.setup(&block : Proc(ActorContext(T), AbstractBehavior(T))) : DeferredBehavior(T)

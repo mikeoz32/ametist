@@ -1,6 +1,7 @@
 require "./ametist/databuffer"
 require "http/server"
 require "json"
+require "./lfapi"
 # Ametist is a vector database implementation in Crystal
 #
 struct Slice(T)
@@ -206,32 +207,20 @@ module Ametist
       @data_buffers.keys
     end
   end
-end
 
-module FastAPI
-  class Route
-  end
+  class Database
 
-  class FastAPI
-    include HTTP::Handler
+    def initialize
+      @collections = {} of String => Collection
+    end
 
-    def call(context)
-      schema = Ametist::CollectionSchema.new("test", [] of Ametist::FieldSchema)
-      context.response.content_type = "application/json"
-      context.response.print schema.to_json
+    def create_collection(name : String, schema : CollectionSchema)
+      raise ArgumentError.new("Collection name already exists") if @collections.key?(name)
+      @collections[name] = Collection.new(schema)
+    end
+
+    def get_collection(name : String)
+      @collections[name]
     end
   end
 end
-
-def main
-  puts "Here will run cool vector database, i promice"
-
-  server = HTTP::Server.new ([FastAPI::FastAPI.new])
-
-  address = server.bind_tcp 9999
-  puts "Listening on #{address}"
-  server.listen
-end
-
-
-# main
