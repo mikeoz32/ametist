@@ -1,5 +1,13 @@
 require "../lfapi"
 require "../ametist"
+require "json"
+
+class CreateCollectionRequest
+  include JSON::Serializable
+
+  property name : String
+  property description : String
+end
 
 class CollectionsResource
   include LF::APIRoute
@@ -7,6 +15,11 @@ class CollectionsResource
   @[LF::APIRoute::Get("/collections")]
   def list_collections(request : HTTP::Request)
     Ametist::CollectionSchema.new("test", [] of Ametist::FieldSchema)
+  end
+
+  @[LF::APIRoute::Post("/collections")]
+  def create_collection(collection : CreateCollectionRequest)
+    collection.name
   end
 end
 
@@ -17,9 +30,11 @@ class DatabaseInjector
   end
 
   def call(context)
-    context.state = @ctx
+    context.state = @ctx.enter_scope("request")
     # TODO - Implement entering to request scope
     call_next(context)
+  ensure
+    context.state.as(LF::DI::AnnotationApplicationContext).exit unless context.state.nil?
   end
 end
 
@@ -36,9 +51,9 @@ def main
   ctx = LF::DI::AnnotationApplicationContext.new
   ctx.register(AmetistConfig.new)
   ctx.add_bean(name: "dbconfig", type: String) { |_| "test" }
-  ctx.add_bean(name: "database", scope: "singleton",type: Ametist::Database) do |ctx|
+  ctx.add_bean(name: "database", scope: "singleton", type: Ametist::Database) do |ctx|
     puts ctx.get_bean("dbconfig", String)
-    Ametist::Database.new()
+    Ametist::Database.new
   end
   database = ctx.get_bean("database", Ametist::Database)
   puts "ctx.get_bean(#{database}, Ametist::Database)"

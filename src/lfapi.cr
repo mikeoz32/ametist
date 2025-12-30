@@ -212,15 +212,23 @@ module LF
                   {{ arg.name }} = ctx.request
                 {% else %}
                  {{ puts arg.restriction }}
-                 store = ctx.store
-                 if !store.has_key?("{{ arg.name }}")
-                  if _params.has_key?("{{ arg.name }}")
-                    store = _params
-                  else
-                    raise "Missing parameter: {{ arg.name }}"
-                  end
-                 end
+                 store = ctx.state.as(LF::DI::AnnotationApplicationContext)
+                 if store.has_key?("{{ arg.name }}") || _params.has_key?("{{ arg.name }}")
+                   if _params.has_key?("{{ arg.name }}")
+                     store = _params
+                   end
                    {{ arg.name }} : {{ arg.restriction }} = store.to_t("{{ arg.name }}", {{ arg.restriction }}).as({{ arg.restriction.id }})
+                 else
+                   {% if parse_type(arg.restriction.stringify).resolve.ancestors.any? { |ancestor| ancestor.id == "JSON::Serializable" } %}
+                     raise "Bad Request" if ctx.request.body.nil?
+                     begin
+                     {{ arg.name }} = {{arg.restriction.id}}.from_json(ctx.request.body.as(IO))
+                     rescue e : JSON::SerializableError
+                       raise LF::BadRequest.new e.message.as(String)
+                     end
+                   {% else %}
+                     raise "Missing parameter: {{ arg.name }}"
+                   {% end %}
                  end
                 {% end %}
                {% end %}
@@ -265,6 +273,26 @@ module LF
     end
   end
 
+  class HTTPException < Exception
+    getter status_code : HTTP::Status
+
+    def initialize(message : String, @status_code : HTTP::Status)
+      super(message)
+    end
+  end
+
+  class NotFound < HTTPException
+    def initialize(message : String = "Not Found")
+      super(message, HTTP::Status::NOT_FOUND)
+    end
+  end
+
+  class BadRequest < HTTPException
+    def initialize(message : String = "Bad Request")
+      super(message, HTTP::Status::BAD_REQUEST)
+    end
+  end
+
   class JSONResponse
     include Response
 
@@ -292,8 +320,24 @@ module LF
       block.call(@router)
     end
 
+    def initialize
+      @router = Router.new
+    end
+
     def call(context)
       @router.call(context)
+    rescue e : HTTPException
+      context.response.status = e.status_code
+      context.response.content_type = "text/plain"
+      context.response.print e.message
+    rescue e : NotFound
+      context.response.status = HTTP::Status::NOT_FOUND
+      context.response.content_type = "text/plain"
+      context.response.print "Not Found"
+    rescue e : BadRequest
+      context.response.status = HTTP::Status::INTERNAL_SERVER_ERROR
+      context.response.content_type = "text/plain"
+      context.response.print "Bad Request"
     end
   end
 end

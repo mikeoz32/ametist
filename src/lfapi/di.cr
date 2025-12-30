@@ -1,25 +1,7 @@
 module LF::DI
   private SERVICE_CLASSES = {} of String => Nil
+
   macro finished
-    # Macro that searches for services and creates ApplicationConfig implementation
-    # with factories for services,
-    # eg for service
-    # ```crystal
-    # @[LF::DI::Service]
-    # class S
-    #   def initialize
-    #     puts "S initialized"
-    #   end
-    # end
-    # ```
-    # macro will add method to configuration
-    # ```crystal
-    # @[LF::DI::Bean]
-    # def create_s
-    #   S.new
-    # end
-    # ```
-    #
     {%
       services = [] of Nil
 
@@ -41,25 +23,43 @@ module LF::DI
   annotation Service
   end
 
-  annotation Bean
-    # Marks class method as a bean factory method
+  annotation Bean # Marks class method as a bean factory method
     # Parameters:
     #   name: String - The name of the bean
     #   scope: String - The scope of the bean (singleton, prototype, etc.)
+
+
   end
 
   module BeanFactory
+    getter scope : String
+  end
+
+  module BeanInstance
   end
 
   class BeanFactoryImpl(T)
     include BeanFactory
-    def initialize (*, name : String, scope : String = "singleton", @factory : Proc(ApplicationContext, T))
+
+    def initialize(*, name : String, scope : String = "singleton", @factory : Proc(ApplicationContext, T))
       @name = name
       @scope = scope
     end
 
     def create(context : ApplicationContext) : T
       @factory.call(context)
+    end
+  end
+
+  class BeanInstanceImpl(T)
+    include BeanInstance
+
+    getter instance : T
+    getter scope : String
+
+    def initialize(*, instance : T, scope : String)
+      @instance = instance
+      @scope = scope
     end
   end
 
@@ -95,26 +95,78 @@ module LF::DI
 
     @configurations : Set(ApplicationConfig) = Set(ApplicationConfig).new
     @factories = Hash(String, BeanFactory).new
+    @parent : AbstractApplicationContext?
+    @scope : String = "singleton"
+    @instances = Hash(String, BeanInstance).new
+
+    getter scope
+    getter parent
+
+    def initialize
+    end
+
+    def initialize(parent : AbstractApplicationContext, scope : String)
+      raise "Singleton scope is not allowed for child contexts" if scope == "singleton"
+      @scope = scope
+    end
 
     def register(config : ApplicationConfig)
       @configurations.add(config)
     end
 
     def add_bean(*, name : String, scope : String = "singleton", type : T.class, &factory : Proc(ApplicationContext, T)) forall T
+      raise "Child context can not add beans" if @parent
       @factories[name] = BeanFactoryImpl(T).new(name: name, scope: scope, factory: factory).as(BeanFactory)
     end
 
     def get_bean(name : String, type : T.class) : T forall T
-      raise "No bean found" unless @factories.has_key?(name)
-      @factories[name].as(BeanFactoryImpl(T)).create(self)
+      get_bean_instance(name, type).instance
+    end
+
+    def get_bean_instance(name : String, type : T.class, caller : AbstractApplicationContext? = nil) : BeanInstanceImpl(T) forall T
+      if @instances.has_key?(name)
+        @instances[name].as(BeanInstanceImpl(T))
+      elsif @factories.has_key?(name)
+        # Root only could have facroties
+        factory = @factories[name].as(BeanFactoryImpl(T))
+
+        if !caller.nil?
+          if factory.scope != "prototype" && caller.scope != factory.scope
+            raise "Scope mismatch"
+          end
+        end
+
+        instance = BeanInstanceImpl(T).new(instance: factory.create(caller || self), scope: factory.scope)
+        if factory.scope != "prototype"
+          @instances[name] = instance
+        end
+        instance
+      elsif @parent
+        instance = @parent.as(AbstractApplicationContext).get_bean_instance(name, type, caller || self)
+        @instances[name] = instance
+        instance
+      else
+        raise "Bean not found"
+      end
+    end
+
+    def to_t(name : String, type : T.class) : T forall T
+      get_bean(name, type)
     end
 
     delegate has_key?, to: @factories
+
+    def enter_scope(scope : String)
+      self.class.new(self, scope)
+    end
+
+    def exit
+      @instances.clear
+    end
   end
 
   class AnnotationApplicationContext < AbstractApplicationContext
   end
-
 end
 
 # Pass tuple as arguments to a function

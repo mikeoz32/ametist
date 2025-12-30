@@ -6,7 +6,7 @@ authors:
 
 targets:
     ametist:
-        main: src/ametist.cr
+        main: src/bin/ametist.cr
     movie:
         main: src/movie.cr
     api:
