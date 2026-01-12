@@ -31,30 +31,39 @@ class DatabaseInjector
 
   def call(context)
     context.state = @ctx.enter_scope("request")
-    # TODO - Implement entering to request scope
     call_next(context)
   ensure
     context.state.as(LF::DI::AnnotationApplicationContext).exit unless context.state.nil?
   end
 end
 
+@[LF::DI::Service]
+class TestService
+  def initialize(@database : Ametist::Database)
+  end
+end
+
 struct AmetistConfig
   include LF::DI::ApplicationConfig
 
+
+  @[LF::DI::Bean]
+  def name : String
+    "test"
+  end
+
   @[LF::DI::Bean(name: "database")]
-  def database : Ametist::Database
+  def database(name : String) : Ametist::Database
+    puts "Database name: #{name}"
     Ametist::Database.new
   end
 end
 
 def main
   ctx = LF::DI::AnnotationApplicationContext.new
+  auto = LF::DI::AutowiredApplicationConfig.new
   ctx.register(AmetistConfig.new)
-  ctx.add_bean(name: "dbconfig", type: String) { |_| "test" }
-  ctx.add_bean(name: "database", scope: "singleton", type: Ametist::Database) do |ctx|
-    puts ctx.get_bean("dbconfig", String)
-    Ametist::Database.new
-  end
+  ctx.register(auto)
   database = ctx.get_bean("database", Ametist::Database)
   puts "ctx.get_bean(#{database}, Ametist::Database)"
   api = LF::LFApi.new do |router|

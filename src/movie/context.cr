@@ -31,6 +31,7 @@ module Movie
 
     def log
       @log
+      @t
     end
 
     def state

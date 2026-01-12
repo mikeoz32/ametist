@@ -1,24 +1,6 @@
 module LF::DI
-  private SERVICE_CLASSES = {} of String => Nil
-
-  macro finished
-    {%
-      services = [] of Nil
-
-      Object.all_subclasses.each do |klass|
-        klass.annotations(LF::DI::Service).each do |ann|
-          puts "Found annotation: #{ann.name} for #{klass.name}"
-          services << klass
-        end
-      end
-
-      puts services
-      services.each do |service|
-        SERVICE_CLASSES[service.name] = service
-      end
-      puts "Finished service discovery"
-    %}
-  end
+    # TODO find all annotated classes and create AutowiredApplicationConfig class
+    # or move this logic into AutoriredApplicationConfig
 
   annotation Service
   end
@@ -33,6 +15,7 @@ module LF::DI
 
   module BeanFactory
     getter scope : String
+
   end
 
   module BeanInstance
@@ -48,6 +31,7 @@ module LF::DI
 
     def create(context : ApplicationContext) : T
       @factory.call(context)
+
     end
   end
 
@@ -75,18 +59,52 @@ module LF::DI
     macro included
       macro finished
         {% verbatim do %}
+          def configure(ctx : LF::DI::AbstractApplicationContext)
+          {% factories = [] of NamedTuple %}
           {%
             @type.methods.each do |method|
               method.annotations(LF::DI::Bean).each do |ann|
-                puts "Found bean method: #{method.body}"
-                raise "Bean name is required" unless ann.named_args.has_key?("name")
-                puts "Bean name: #{ann["name"]}"
-                bean_name = ann["name"]
+                bean_name = ann["name"] || method.name.stringify
+                factories << { name: bean_name, method: method.body, type: method.return_type, args: method.args }
+                puts factories
               end
             end
           %}
+          {% for factory in factories %}
+            ctx.add_bean name: {{ factory[:name] }}, type: {{ factory[:type] }}  do |ctx|
+              {%for arg in factory[:args]%}
+                {{ arg.name }} = ctx.get_bean("{{ arg.name }}", {{ arg.restriction }})
+              {% end %}
+
+              {{ factory[:method] }}
+            end
+          {% end %}
+          end
+        {{ debug }}
         {% end %}
       end
+    end
+  end
+
+  macro finished
+    class AutowiredApplicationConfig
+      include ApplicationConfig
+      {% for klass in Object.all_subclasses %}
+        {% service_name = klass.name.stringify
+              .gsub(/([A-Z]+)([A-Z][a-z])/,"\\1_\\2")
+              .gsub(/([a-z0-9])([A-Z])/,"\\1_\\2")
+              .downcase
+        %}
+        {% for ann in klass.annotations(LF::DI::Service) %}
+          {% init = klass.methods.find { |method| method.name.stringify == "initialize" } %}
+          {% raise "Missing initialize method" if init.nil? %}
+          {% init_args = init.args.map {|arg| arg.name.stringify + " : " + arg.restriction.stringify} %}
+          @[LF::DI::Bean(name: {{ service_name }})]
+          def get_{{ service_name.id }}({{ init_args.join(", ").id }}) : {{ klass.id }}
+            {{ klass.id }}.new({{ init.args.map(&.name.stringify).join(", ").id }})
+          end
+        {% end %}
+      {% end %}
     end
   end
 
@@ -112,6 +130,7 @@ module LF::DI
 
     def register(config : ApplicationConfig)
       @configurations.add(config)
+      config.configure(self)
     end
 
     def add_bean(*, name : String, scope : String = "singleton", type : T.class, &factory : Proc(ApplicationContext, T)) forall T
