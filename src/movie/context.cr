@@ -24,6 +24,10 @@ module Movie
     @children : Array(ActorRefBase) = [] of ActorRefBase
     @watching : Array(ActorRefBase) = [] of ActorRefBase
     @watchers : Array(ActorRefBase) = [] of ActorRefBase
+    @pending_children : Array(ActorRefBase) = [] of ActorRefBase
+    @pending_terminations : Int32 = 0
+    @pre_stop_completed : Bool = false
+    @post_stop_sent : Bool = false
 
     def initialize(behavior : AbstractBehavior(T), @ref : ActorRef(T), @system : AbstractActorSystem)
       @behavior = behavior
@@ -52,7 +56,7 @@ module Movie
     end
 
     def stop
-      return if [@state.stopped?, @state.failed?, @state.terminated?].any?
+      return if [@state.stopped?, @state.failed?, @state.terminated?, @state == State::STOPPING].any?
 
       send_system_message(STOP)
     end
@@ -62,7 +66,7 @@ module Movie
       raise "System not initialized" unless @system
       child = @system.spawn(behavior)
 
-      attach_child(child.as(ActorRefBase))
+      attach_child(child)
 
       child.as(ActorRef(U))
     end
@@ -105,6 +109,7 @@ module Movie
       new_behavior = @active_behavior.receive(message.message, self)
       if new_behavior.is_a?(AbstractBehavior(T))
         @active_behavior = resolve_behavior(new_behavior)
+        @behavior = @active_behavior
       end
     rescue ex : Exception
       log.error(exception: ex) { "Error handling message" }
@@ -140,16 +145,20 @@ module Movie
         #Child failed
         m = message.message.as(Failed)
         # TODO: handle supervision strategy
+      when Terminated
+        handle_terminated(message.message.as(Terminated))
       else
         # Unknown system message - send to dead letters or log
       end
     end
 
     protected def resolve_behavior(behavior : AbstractBehavior(T)) : AbstractBehavior(T)
-      case behavior.tag
-      when BehaviorTag::DEFERRED
-        behavior.as(DeferredBehavior(T)).defer(self)
-      when BehaviorTag::STOPPED
+      case behavior
+      when SameBehavior(T)
+        @active_behavior
+      when DeferredBehavior(T)
+        behavior.defer(self)
+      when StoppedBehavior(T)
         stop
         behavior
       else
@@ -171,6 +180,7 @@ module Movie
 
     protected def handle_pre_start
       @active_behavior = resolve_behavior(@behavior)
+      @behavior = @active_behavior
       @active_behavior.on_signal(PRE_START)
       send_system_message(POST_START)
     rescue ex : Exception
@@ -184,18 +194,59 @@ module Movie
     end
 
     protected def handle_stop
+      return if @state == State::STOPPING
       transition_to(State::STOPPING)
+      @pre_stop_completed = false
+      @post_stop_sent = false
+      initiate_children_stop
       send_system_message(PRE_STOP)
+      finalize_stop_if_ready
     end
 
     protected def handle_pre_stop
-      @behavior.on_signal(PRE_STOP)
-      send_system_message(POST_STOP)
+      @active_behavior.on_signal(PRE_STOP)
+      @pre_stop_completed = true
+      finalize_stop_if_ready
     end
 
     protected def handle_post_stop
-      @behavior.on_signal(POST_STOP)
+      @active_behavior.on_signal(POST_STOP)
       transition_to(State::STOPPED)
+      notify_for_termination
+    end
+
+    protected def handle_terminated(message : Terminated)
+      actor = message.actor
+      @watching.delete(actor)
+      @children.delete(actor)
+
+      if @pending_terminations > 0 && @pending_children.includes?(actor)
+        @pending_children.delete(actor)
+        @pending_terminations -= 1
+        STDERR.puts "actor=#{@ref.id} pending_terminations=#{@pending_terminations} pre_stop_completed=#{@pre_stop_completed}" if ENV["DEBUG_STOP"]?
+      end
+
+      finalize_stop_if_ready
+    end
+
+    protected def initiate_children_stop
+      @pending_children = @children.dup
+      @pending_terminations = @pending_children.size
+      STDERR.puts "actor=#{@ref.id} children=#{@pending_terminations}" if ENV["DEBUG_STOP"]?
+      @pending_children.each do |child|
+        child.send_system(STOP)
+      end
+    end
+
+    protected def finalize_stop_if_ready
+      STDERR.puts "actor=#{@ref.id} check finalize: pending=#{@pending_terminations} pre=#{@pre_stop_completed} post_sent=#{@post_stop_sent}" if ENV["DEBUG_STOP"]?
+      return if @post_stop_sent
+      return unless @pre_stop_completed
+      return unless @pending_terminations == 0
+
+      STDERR.puts "actor=#{@ref.id} finalize_stop" if ENV["DEBUG_STOP"]?
+      @post_stop_sent = true
+      send_system_message(POST_STOP)
     end
 
     protected def transition_to(new_state : State)

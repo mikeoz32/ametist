@@ -77,7 +77,7 @@ module Movie
     # Notification that watched actor terminated
     getter actor : ActorRefBase
     getter cause : Exception?
-    def initialize(@actor : ActorRefBase, @cause : Exception?)
+    def initialize(@actor : ActorRefBase, @cause : Exception? = nil)
     end
   end
 

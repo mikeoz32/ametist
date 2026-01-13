@@ -48,26 +48,65 @@ class Child < Movie::AbstractBehavior(String)
   end
 end
 
+class StopProbe < Movie::AbstractBehavior(Symbol)
+  @@events = [] of String
+  @@mutex = Mutex.new
 
+  def self.reset
+    @@mutex.synchronize { @@events.clear }
+  end
+
+  def self.events
+    @@mutex.synchronize { @@events.dup }
+  end
+
+  def initialize(@name : String)
+  end
+
+  def receive(message, context)
+    Movie::Behaviors(Symbol).same
+  end
+
+  def on_signal(signal)
+    STDERR.puts "StopProbe #{@name} signal=#{signal.class}" if ENV["DEBUG_STOP"]?
+    case signal
+    when Movie::PreStop
+      @@mutex.synchronize { @@events << "#{@name}:pre_stop" }
+    when Movie::PostStop
+      @@mutex.synchronize { @@events << "#{@name}:post_stop" }
+    end
+  end
+end
+
+
+
+def wait_until(timeout_ms : Int32 = 1000, interval_ms : Int32 = 5)
+  deadline = Time.monotonic + timeout_ms.milliseconds
+  until yield
+    raise "Timeout waiting for condition" if Time.monotonic >= deadline
+    sleep(interval_ms.milliseconds)
+  end
+end
 
 describe Movie do
   before_each do
     Main.reset
     Child.reset
+    StopProbe.reset
   end
 
   it "should be able to spawn actors" do
     system = Movie::ActorSystem(MainMessage).new(Main.create())
 
     system << MainMessage.new(message: "hello")
-    sleep(0.05)
+    wait_until { Main.count == 1 }
     Main.count.should eq(1)
 
     main = system.spawn(Main.create())
 
     child = system.spawn(Child.create(main))
     child << "message "
-    sleep(0.001)
+    wait_until { Child.count == 1 && Main.count == 2 }
     Child.count.should eq(1)
     Main.count.should eq(2)
   end
@@ -87,7 +126,7 @@ describe Movie do
     actor = system.spawn(receive_behavior)
 
     actor << "ping"
-    sleep(0.05)
+    wait_until { handler_called }
 
     handler_called.should be_true
     returned_behavior.should_not be_nil
@@ -106,7 +145,7 @@ describe Movie do
     actor = system.spawn(behavior)
 
     actor << "ping"
-    sleep(0.05)
+    wait_until { !logger.nil? }
 
     logger.should_not be_nil
     logger.not_nil!.responds_to?(:debug).should be_true
@@ -123,7 +162,58 @@ describe Movie do
       end
     end)
     ref << "message "
-    sleep(10)
+
+    wait_until(timeout_ms: 200) do
+      if ctx = system.context(ref.id).as?(Movie::ActorContext(String))
+        ctx.state.failed?
+      else
+        false
+      end
+    end
+  end
+
+  it "waits for children to terminate before finishing parent stop" do
+    system = Movie::ActorSystem(Symbol).new(Movie::Behaviors(Symbol).same)
+
+    parent_behavior = Movie::Behaviors(Symbol).setup do |context|
+      context.spawn(StopProbe.new("child-1"))
+      context.spawn(StopProbe.new("child-2"))
+      StopProbe.new("parent")
+    end
+
+    parent = system.spawn(parent_behavior)
+
+    STDERR.puts "Parent actor id: #{parent.id}" if ENV["DEBUG_STOP"]?
+
+    parent.send_system(Movie::STOP)
+
+    sleep(1.seconds)
+
+    events = StopProbe.events
+    parent_idx = events.index("parent:post_stop").not_nil!
+    child1_idx = events.index("child-1:post_stop").not_nil!
+    child2_idx = events.index("child-2:post_stop").not_nil!
+
+    parent_idx.should be > child1_idx
+    parent_idx.should be > child2_idx
+
+    ctx = system.context(parent.id).as?(Movie::ActorContext(Symbol))
+    ctx.not_nil!.state.stopped?.should be_true
+  end
+
+  it "stops immediately when there are no children" do
+    system = Movie::ActorSystem(Symbol).new(Movie::Behaviors(Symbol).same)
+    actor = system.spawn(StopProbe.new("solo"))
+
+    actor.send_system(Movie::STOP)
+
+    wait_until(timeout_ms: 200) { StopProbe.events.includes?("solo:post_stop") }
+
+    events = StopProbe.events
+    events.includes?("solo:post_stop").should be_true
+
+    ctx = system.context(actor.id).as?(Movie::ActorContext(Symbol))
+    ctx.not_nil!.state.stopped?.should be_true
   end
 
 
