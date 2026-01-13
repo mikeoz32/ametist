@@ -19,7 +19,7 @@ module Movie
     @state : State = State::CREATED
 
     @mailbox : Mailbox(T)?
-    @ref : ActorRef(T)
+    @ref : ActorRefBase
 
     @children : Array(ActorRefBase) = [] of ActorRefBase
     @watching : Array(ActorRefBase) = [] of ActorRefBase
@@ -29,7 +29,8 @@ module Movie
     @pre_stop_completed : Bool = false
     @post_stop_sent : Bool = false
 
-    def initialize(behavior : AbstractBehavior(T), @ref : ActorRef(T), @system : AbstractActorSystem)
+    def initialize(behavior : AbstractBehavior(T), ref : ActorRef(T), @system : AbstractActorSystem)
+      @ref = ref.as(ActorRefBase)
       @behavior = behavior
       @active_behavior = behavior
       @log = Log.for(@ref.id.to_s)
@@ -40,7 +41,7 @@ module Movie
     end
 
     def ref : ActorRef(T)
-      @ref
+      @ref.as(ActorRef(T))
     end
 
     def start(internal = false)
@@ -90,7 +91,8 @@ module Movie
     def tell(message : T)
       raise "Mailbox not initialized" unless @mailbox
       mbox = @mailbox.as(Mailbox(T))
-      mbox << Envelope.new(message, self.@ref)
+      ref = @ref.as(ActorRefBase)
+      mbox << Envelope.new(message, ref)
     end
 
     def << (message : T)
@@ -100,10 +102,14 @@ module Movie
     def send_system_message(message : SystemMessage)
       raise "Mailbox not initialized" unless @mailbox
       mbox = @mailbox.as(Mailbox(T))
-      mbox.send_system(Envelope.new(message, self.@ref))
+      mbox.send_system(Envelope.new(message, @ref))
     end
 
     def on_message(message : Envelope(T))
+      if @state == State::STOPPING || @state == State::STOPPED || @state == State::FAILED || @state == State::TERMINATED
+        log.warn { "Dropping message #{message.message.inspect} from #{message.sender} in state #{@state}" }
+        return
+      end
       log.debug { "Actor #{@ref} received message #{message.message}" }
       log.debug { "Current state: #{@state}" }
       new_behavior = @active_behavior.receive(message.message, self)

@@ -60,6 +60,7 @@ module Movie
 
   abstract class ActorRefBase
     abstract def send_system(message : SystemMessage)
+    abstract def id : Int32
   end
 
   class ActorRef(T) < ActorRefBase

@@ -216,5 +216,36 @@ describe Movie do
     ctx.not_nil!.state.stopped?.should be_true
   end
 
+  it "drops user messages while stopping" do
+    count = 0
+    mutex = Mutex.new
+
+    behavior = Movie::Behaviors(Int32).receive do |message, context|
+      mutex.synchronize { count += 1 }
+      Movie::Behaviors(Int32).same
+    end
+
+    system = Movie::ActorSystem(Int32).new(Movie::Behaviors(Int32).same)
+    actor = system.spawn(behavior)
+
+    actor << 1
+    wait_until { mutex.synchronize { count == 1 } }
+
+    actor.send_system(Movie::STOP)
+
+    actor << 2
+    actor << 3
+
+    wait_until(timeout_ms: 200) do
+      if ctx = system.context(actor.id).as?(Movie::ActorContext(Int32))
+        ctx.state.stopped?
+      else
+        false
+      end
+    end
+
+    mutex.synchronize { count.should eq(1) }
+  end
+
 
 end
