@@ -33,7 +33,10 @@ class DatabaseInjector
     context.state = @ctx.enter_scope("request")
     call_next(context)
   ensure
-    context.state.as(LF::DI::AnnotationApplicationContext).exit unless context.state.nil?
+    # Cleanup per-request DI context
+    if state = context.state
+      state.as(LF::DI::AnnotationApplicationContext).exit
+    end
   end
 end
 
@@ -54,7 +57,6 @@ struct AmetistConfig
 
   @[LF::DI::Bean(name: "database")]
   def database(name : String) : Ametist::Database
-    puts "Database name: #{name}"
     Ametist::Database.new
   end
 end
@@ -65,7 +67,6 @@ def main
   ctx.register(AmetistConfig.new)
   ctx.register(auto)
   database = ctx.get_bean("database", Ametist::Database)
-  puts "ctx.get_bean(#{database}, Ametist::Database)"
   api = LF::LFApi.new do |router|
     CollectionsResource.new.setup_routes(router)
   end
@@ -76,7 +77,7 @@ def main
   ])
 
   address = server.bind_tcp(9999)
-  puts "Starting Ametist api at #{address}"
+  Log.info { "Starting Ametist API at #{address}" }
   server.listen
 end
 

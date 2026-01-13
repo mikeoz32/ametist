@@ -57,7 +57,7 @@ class Hash
   def to_t(key, type)
     {% begin %}
       case type
-        {% for m, t in {to_i: Int32, to_f: Float32} %}
+        {% for m, t in {to_i: Int32, to_f: Float32, to_s: String} %}
             when {{t.id}}.class
               self[key].{{m.id}}
           {% end %}
@@ -164,7 +164,6 @@ module LF
     def call(context : HTTP::Server::Context)
       # @root.dump
       result = @root.search(context.request.path)
-      puts "Matched route: #{result}"
 
       route = Route.new(result)
       route.call(context)
@@ -198,20 +197,17 @@ module LF
       def setup_routes(router : LF::Router)
 
       {% for method in @type.methods.sort_by(&.line_number) %}
-        {{ puts method.annotations }}
-        {{ puts method.args }}
         {% for route_method in {Get, Post, Put, Delete, Patch, Route} %}
           {% router_method = route_method.stringify.split("::")[-1].downcase.id %}
           {% router_method = "add".id if router_method == "route" %}
           {% for ann, idx in method.annotations(route_method) %}
-             {{ puts ann }}
              {% path = ann[0] || ann[:path] || raise "Missing path in #{method.name}" %}
              router.{{ router_method }}({{ path }}) do |ctx, _params|
                {% for arg in method.args %}
                 {% if arg.name == "request" && arg.restriction.id == "HTTP::Request" %}
                   {{ arg.name }} = ctx.request
                 {% else %}
-                 {{ puts arg.restriction }}
+                 raise LF::InternalServerError.new("DI context not initialized") if ctx.state.nil?
                  store = ctx.state.as(LF::DI::AnnotationApplicationContext)
                  if store.has_key?("{{ arg.name }}") || _params.has_key?("{{ arg.name }}")
                    if _params.has_key?("{{ arg.name }}")
@@ -293,6 +289,12 @@ module LF
     end
   end
 
+  class InternalServerError < HTTPException
+    def initialize(message : String = "Internal Server Error")
+      super(message, HTTP::Status::INTERNAL_SERVER_ERROR)
+    end
+  end
+
   class JSONResponse
     include Response
 
@@ -326,18 +328,18 @@ module LF
 
     def call(context)
       @router.call(context)
+    rescue e : BadRequest
+      context.response.status = HTTP::Status::BAD_REQUEST
+      context.response.content_type = "text/plain"
+      context.response.print e.message
     rescue e : HTTPException
       context.response.status = e.status_code
       context.response.content_type = "text/plain"
       context.response.print e.message
-    rescue e : NotFound
-      context.response.status = HTTP::Status::NOT_FOUND
-      context.response.content_type = "text/plain"
-      context.response.print "Not Found"
-    rescue e : BadRequest
+    rescue e : Exception
       context.response.status = HTTP::Status::INTERNAL_SERVER_ERROR
       context.response.content_type = "text/plain"
-      context.response.print "Bad Request"
+      context.response.print "Internal Server Error"
     end
   end
 end

@@ -11,6 +11,15 @@ class JsonModel
   end
 end
 
+class TestResourceForDI
+  include LF::APIRoute
+
+  @[LF::APIRoute::Get("/test")]
+  def test_endpoint(name : String)
+    "Hello #{name}"
+  end
+end
+
 describe "Trie" do
   describe "Node" do
     it "adds and searches exact routes" do
@@ -301,5 +310,87 @@ describe "LF::LFApi" do
     body.should contain("\"id\"")
     body.should contain("\"name\"")
     body.should contain("John")
+  end
+
+  it "returns 400 for BadRequest" do
+    app = LF::LFApi.new do |router|
+      router.get("/bad") do
+        raise LF::BadRequest.new("bad input")
+      end
+    end
+
+    io = IO::Memory.new
+    request = HTTP::Request.new("GET", "/bad")
+    response = HTTP::Server::Response.new(io)
+    context = HTTP::Server::Context.new(request, response)
+
+    app.call(context)
+    response.close
+
+    response.status.should eq(HTTP::Status::BAD_REQUEST)
+    body = io.to_s.split("\r\n\r\n", 2)[1]
+    body.should eq("bad input")
+  end
+
+  it "returns 404 for NotFound" do
+    app = LF::LFApi.new do |router|
+      router.get("/missing") do
+        raise LF::NotFound.new("missing")
+      end
+    end
+
+    io = IO::Memory.new
+    request = HTTP::Request.new("GET", "/missing")
+    response = HTTP::Server::Response.new(io)
+    context = HTTP::Server::Context.new(request, response)
+
+    app.call(context)
+    response.close
+
+    response.status.should eq(HTTP::Status::NOT_FOUND)
+    body = io.to_s.split("\r\n\r\n", 2)[1]
+    body.should eq("missing")
+  end
+
+  it "returns 500 for unexpected errors" do
+    app = LF::LFApi.new do |router|
+      router.get("/boom") do
+        raise "boom"
+      end
+    end
+
+    io = IO::Memory.new
+    request = HTTP::Request.new("GET", "/boom")
+    response = HTTP::Server::Response.new(io)
+    context = HTTP::Server::Context.new(request, response)
+
+    app.call(context)
+    response.close
+
+    response.status.should eq(HTTP::Status::INTERNAL_SERVER_ERROR)
+    body = io.to_s.split("\r\n\r\n", 2)[1]
+    body.should eq("Internal Server Error")
+  end
+end
+
+describe "LF::APIRoute" do
+  it "returns 500 when DI context is not initialized (missing middleware)" do
+    # Create API route without DatabaseInjector middleware
+    app = LF::LFApi.new do |router|
+      TestResourceForDI.new.setup_routes(router)
+    end
+
+    io = IO::Memory.new
+    request = HTTP::Request.new("GET", "/test")
+    response = HTTP::Server::Response.new(io)
+    context = HTTP::Server::Context.new(request, response)
+    # Note: context.state is nil here (no middleware set it)
+
+    app.call(context)
+    response.close
+
+    response.status.should eq(HTTP::Status::INTERNAL_SERVER_ERROR)
+    body = io.to_s.split("\r\n\r\n", 2)[1]
+    body.should eq("DI context not initialized")
   end
 end
