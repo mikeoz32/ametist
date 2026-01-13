@@ -45,7 +45,7 @@ module Movie
   end
 
   class ReceiveMessageBehavior(T) < AbstractBehavior(T)
-    def initialize(@handler : T, ActorContext(T) -> AbstractBehavior(T))
+    def initialize(@handler : Proc(T, ActorContext(T), AbstractBehavior(T)))
       super BehaviorTag::EXTENSIBLE
     end
 

@@ -1,0 +1,24 @@
+* Ametist ↔ Movie Integration Plan
+  Focus: use Ametist (vector store) from Movie actors. Non-actor details removed here.
+
+** Abstractions
+   - Define EmbeddingStore interface over Ametist buffers (upsert(id, vec, payload), delete, top-k search).
+   - Provide thin adapter actor protocol: IndexRequest/IndexResult, SearchRequest/SearchResult, DeleteRequest/DeleteResult.
+   - Keep payloads as Crystal types for now; later add JSON::Serializable codec without API change.
+
+** Actor roles (in Movie)
+   - Indexer actor: validates, writes to store, idempotent upsert, retry with backoff.
+   - Searcher actor: read-only top-k; supports filtering/payload fetch.
+   - Optional Router/Shard actor if multiple collections.
+
+** Persistence interplay
+   - If Movie persistence enabled: write-ahead (journal) before committing to Ametist; on recovery replay index ops.
+   - Snapshots can store collection metadata or last op offset for fast warm-up.
+
+** Performance & backpressure
+   - Bounded inbox for indexer; drop/queue policy configurable; system messages prioritized.
+   - Consider batching upserts for throughput; configurable batch size/flush interval.
+
+** Testing
+   - Upsert + search roundtrip; delete removes from results; concurrent upserts remain idempotent.
+   - Restart scenario: replayed ops keep index consistent; backpressure respected under load.

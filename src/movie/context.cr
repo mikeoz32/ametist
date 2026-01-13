@@ -3,6 +3,8 @@ module Movie
   end
 
   class ActorContext(T) < AbstractActorContext
+    getter log : Log
+
     enum State
       CREATED
       STARTING
@@ -17,21 +19,16 @@ module Movie
     @state : State = State::CREATED
 
     @mailbox : Mailbox(T)?
+    @ref : ActorRef(T)
 
     @children : Array(ActorRefBase) = [] of ActorRefBase
     @watching : Array(ActorRefBase) = [] of ActorRefBase
     @watchers : Array(ActorRefBase) = [] of ActorRefBase
 
-    def initialize(behavior : AbstractBehavior(T), ref : ActorRef(T), @system : AbstractActorSystem)
+    def initialize(behavior : AbstractBehavior(T), @ref : ActorRef(T), @system : AbstractActorSystem)
       @behavior = behavior
       @active_behavior = behavior
-      @ref = ref
-      @log = Log.for(ref.id.to_s)
-    end
-
-    def log
-      @log
-      @t
+      @log = Log.for(@ref.id.to_s)
     end
 
     def state
@@ -103,14 +100,14 @@ module Movie
     end
 
     def on_message(message : Envelope(T))
-      puts "Actor #{@ref} received message #{message.message}"
-      puts "Current state: #{@state}"
+      log.debug { "Actor #{@ref} received message #{message.message}" }
+      log.debug { "Current state: #{@state}" }
       new_behavior = @active_behavior.receive(message.message, self)
       if new_behavior.is_a?(AbstractBehavior(T))
         @active_behavior = resolve_behavior(new_behavior)
       end
     rescue ex : Exception
-      puts "Error handling message: #{ex}"
+      log.error(exception: ex) { "Error handling message" }
       notify_for_failure(ex)
       transition_to(State::FAILED)
     end
@@ -133,7 +130,6 @@ module Movie
         unless @watchers.includes?(watcher)
           @watchers << watcher
         end
-        puts "Actor #{@ref} is now being watched by #{watcher}"
       when Unwatch
         unwatcher = message.message.as(Unwatch).actor
         unless @watchers.includes?(unwatcher)
@@ -143,7 +139,6 @@ module Movie
       when Failed
         #Child failed
         m = message.message.as(Failed)
-        puts "Child actor #{m.actor} failed with error: #{m.cause}"
         # TODO: handle supervision strategy
       else
         # Unknown system message - send to dead letters or log
@@ -152,12 +147,13 @@ module Movie
 
     protected def resolve_behavior(behavior : AbstractBehavior(T)) : AbstractBehavior(T)
       case behavior.tag
-        when BehaviorTag::DEFERRED
-          behavior.as(DeferredBehavior(T)).defer(self)
-        when BehaviorTag::STOPPED
-          stop
-        else
-          behavior
+      when BehaviorTag::DEFERRED
+        behavior.as(DeferredBehavior(T)).defer(self)
+      when BehaviorTag::STOPPED
+        stop
+        behavior
+      else
+        behavior
       end
     end
 
@@ -203,7 +199,7 @@ module Movie
     end
 
     protected def transition_to(new_state : State)
-      puts "Actor #{@ref} transitioning from #{@state} to #{new_state}"
+      log.debug { "Actor #{@ref} transitioning from #{@state} to #{new_state}" }
       @state = new_state
     end
   end

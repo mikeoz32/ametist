@@ -1,0 +1,76 @@
+#+PRIORITIES: HIGH MEDIUM LOW
+* Movie Roadmap (Actor Framework)
+  Context: Crystal actors. Focus: lifecycle correctness, configurable supervision, persistence, streams, IO extensions, metrics/observability. Separate from Ametist vector store.
+
+* Core Lifecycle & Supervision
+** Lifecycle correctness
+*** Finish STOPPING 
+reject user msgs, system msgs only; stop children, wait Terminated, then PostStop, notify watchers.
+
+**** TODO [#HIGH] Drop/redirect user messages to dead letters 
+when state=STOPPING; accept system only.
+
+**** TODO [#HIGH] Stop children on actor stop
+   Fan-out Stop to children, track pending, await Terminated, then send PostStop and notify watchers.
+
+**** TODO Add Tests
+   Add tests: STOPPING drops user msgs; watchers receive Terminated; PostStop sent after children stop.
+
+*** Restart flow: Failure -> Restart -> PreRestart/PostRestart, clear mailbox before replay.
+
+**** TODO On Failure, apply strategy, send PreRestart, invoke PostStop on old behavior, purge mailbox, re-init behavior, send PreStart/PostStart.
+**** TODO Ensure system msgs priority during restart; buffer or drop user msgs with a signal during recovery.
+**** TODO Tests: failure triggers restart; mailbox cleared; behavior reinitialized; user msgs during restart are not processed early.
+
+*** Initialize main behavior on system start; fix ActorContext log, DispatcherRegistry duplication, behavior constructor types.
+
+**** TODO Auto-spawn main behavior and set @root so system << works; add spec covering main message flow.
+**** TODO Fix ActorContext#log return, deduplicate DispatcherRegistry, correct ReceiveMessageBehavior proc signature.
+**** TODO Tests: logger accessible; registry registers/gets; Behaviors.receive runs handler; system root receives message.
+
+** Supervision strategies
+*** Configurable per actor: restart/stop/escalate/resume, max retries + backoff.
+*** Tests: child failure handled per strategy; restart limit triggers escalation.
+
+* Persistence (Akka Persistence style)
+** API
+   - Persistent actor with persist/persist_async, recovery on start, snapshot support.
+   - Journal + snapshot store interfaces; start with file backend.
+** File backend
+   - Append-only log per persistence-id; checksum/version; compaction via snapshots.
+   - Tests: crash and replay; snapshot reduces replay time; corruption detection.
+** Mailbox interplay
+   - During recovery buffer or drop user msgs with signal; process system msgs first; clear mailbox on restart.
+
+* Streams (Akka Streams–like) atop actors
+** MVP linear
+   - Source/Flow/Sink; materialize as actors; backpressure (Request(n), OnNext/OnComplete/OnError).
+   - Tests: backpressure end-to-end; error propagation.
+** Fan-in/out + time ops
+   - Broadcast/Merge; throttle/debounce/window with cancellable timers.
+   - Tests: slow consumer respected; throttle rates honored.
+** Persistence hook
+   - Optional: stage state persisted (offset/window) via persistent actor interface; resume after restart.
+
+* IO Extensions
+** IO dispatcher & protocol
+   - Separate execution context for IO-bound tasks; messages IORequest/IOResponse/IOError/Cancel.
+   - Bounded in-flight IO; reject or backpressure with IOBusy; timeouts and cancel.
+   - Tests: timeout, cancel, bounded parallelism respected.
+** Stream IO stages
+   - Source/Sink wrappers for file/network IO; backpressure-aware writes; cancellation closes handles.
+
+* Observability & Tooling
+** Metrics/logging
+   - Counters: mailbox depth, processed msgs, failures, restarts; timers for processing latency.
+** Testing harness
+   - Regression: lifecycle ordering, watch/unwatch, restart, STOPPING semantics.
+   - Property tests where feasible (mailbox ordering, no dead letters swallowed silently).
+** Benchmarks
+   - Mailbox throughput; stream pipeline throughput; persistence replay time.
+
+* Open Questions
+** Exactly-once vs at-least-once
+   - Is at-least-once recovery acceptable? Exactly-once would need dedup ids and idempotent handlers.
+** Stream API surface
+   - How minimal should the DSL be initially? (builders vs simple functions).

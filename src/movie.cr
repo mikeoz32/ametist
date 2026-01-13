@@ -58,22 +58,6 @@ module Movie
   end
 
 
-  class DispatcherRegistry
-    def initialize
-      @dispatchers : Hash(String, Dispatcher) = {} of String => Dispatcher
-    end
-
-    def register(name, dispatcher)
-      @dispatchers[name] = dispatcher
-    end
-
-    def get(name)
-      dispatcher = @dispatchers[name]
-      dispatcher || raise "Dispatcher not found: #{name}"
-      dispatcher
-    end
-  end
-
   abstract class ActorRefBase
     abstract def send_system(message : SystemMessage)
   end
@@ -200,6 +184,9 @@ module Movie
   end
 
   class DispatcherRegistry
+    @@default_dispatcher : Dispatcher?
+    @@internal_dispatcher : Dispatcher?
+
     def initialize
       @dispatchers = {} of String => Dispatcher
     end
@@ -208,15 +195,25 @@ module Movie
       @dispatchers[name] = dispatcher
     end
 
+    def get(name : String)
+      dispatcher = @dispatchers[name]
+      dispatcher || raise "Dispatcher not found: #{name}"
+      dispatcher
+    end
+
     def default
       # ||= is a safe way to initialize a variable only once
       # if there is no default dispatcher, create one and register it
       # return default or return default = new
-      @dispatchers["default"] ||= ParallelDispatcher.new
+      @dispatchers["default"] ||= begin
+        @@default_dispatcher ||= ParallelDispatcher.new
+      end
     end
 
     def internal
-      @dispatchers["internal"] ||= ParallelDispatcher.new
+      @dispatchers["internal"] ||= begin
+        @@internal_dispatcher ||= ParallelDispatcher.new
+      end
     end
   end
 
@@ -243,10 +240,12 @@ module Movie
       system = ActorSystem(T).new(main_behavior, registry)
       system.initialize(main_behavior, registry)
       registry.start
+      system.bootstrap_main
       system
     end
 
     @root : ActorRef(T)?
+    @main_behavior : AbstractBehavior(T)?
 
     protected def initialize(main_behavior : AbstractBehavior(T), registry : ActorRegistry) forall T
       registry.system = self
@@ -255,12 +254,19 @@ module Movie
       # @root = registry.spawn(main_behavior)
     end
 
-
-    def <<(message)
-      @root << message if @root
+    protected def bootstrap_main
+      behavior = @main_behavior || raise "Main behavior not initialized"
+      @root ||= spawn(behavior)
     end
 
-    def spawn(behavior : AbstractBehavior) : ActorRef
+
+    def <<(message)
+      if root = @root
+        root << message
+      end
+    end
+
+    def spawn(behavior : AbstractBehavior(U)) : ActorRef(U) forall U
       raise "System not initialized" unless @registry
       @registry.as(ActorRegistry).spawn(behavior)
     end
