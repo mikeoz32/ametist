@@ -20,6 +20,30 @@ class TestResourceForDI
   end
 end
 
+class TestAPIWithParams
+  include LF::APIRoute
+
+  @[LF::APIRoute::Get("/users/:id")]
+  def get_user(id : Int32)
+    "User #{id}"
+  end
+
+  @[LF::APIRoute::Get("/items/:item_id")]
+  def get_item(item_id : Int64)
+    "Item #{item_id}"
+  end
+
+  @[LF::APIRoute::Get("/products/:product_id")]
+  def get_product(product_id : UUID)
+    "Product #{product_id}"
+  end
+
+  @[LF::APIRoute::Get("/settings/:key")]
+  def get_setting(key : String, enabled : Bool)
+    "Setting #{key} is #{enabled}"
+  end
+end
+
 describe "Trie" do
   describe "Node" do
     it "adds and searches exact routes" do
@@ -392,5 +416,303 @@ describe "LF::APIRoute" do
     response.status.should eq(HTTP::Status::INTERNAL_SERVER_ERROR)
     body = io.to_s.split("\r\n\r\n", 2)[1]
     body.should eq("DI context not initialized")
+  end
+end
+
+describe "LF Parameter Binding and Type Coercion" do
+  describe "Hash#to_t" do
+    it "converts to Int32 successfully" do
+      params = {"id" => "42"}
+      result = params.to_t("id", Int32)
+      result.should eq(42)
+    end
+
+    it "raises BadRequest for invalid Int32" do
+      params = {"id" => "abc"}
+      expect_raises(LF::BadRequest, "Invalid value for parameter 'id': expected Int32") do
+        params.to_t("id", Int32)
+      end
+    end
+
+    it "converts to Int64 successfully" do
+      params = {"big_id" => "9223372036854775807"}
+      result = params.to_t("big_id", Int64)
+      result.should eq(9223372036854775807_i64)
+    end
+
+    it "raises BadRequest for invalid Int64" do
+      params = {"big_id" => "not_a_number"}
+      expect_raises(LF::BadRequest, "Invalid value for parameter 'big_id': expected Int64") do
+        params.to_t("big_id", Int64)
+      end
+    end
+
+    it "converts to Float32 successfully" do
+      params = {"price" => "19.99"}
+      result = params.to_t("price", Float32).as(Float32)
+      result.should be_close(19.99_f32, 0.01)
+    end
+
+    it "raises BadRequest for invalid Float32" do
+      params = {"price" => "not_a_float"}
+      expect_raises(LF::BadRequest, "Invalid value for parameter 'price': expected Float32") do
+        params.to_t("price", Float32)
+      end
+    end
+
+    it "converts to Float64 successfully" do
+      params = {"precise" => "3.141592653589793"}
+      result = params.to_t("precise", Float64).as(Float64)
+      result.should be_close(3.141592653589793, 0.000001)
+    end
+
+    it "raises BadRequest for invalid Float64" do
+      params = {"precise" => "xyz"}
+      expect_raises(LF::BadRequest, "Invalid value for parameter 'precise': expected Float64") do
+        params.to_t("precise", Float64)
+      end
+    end
+
+    it "converts to Bool successfully with 'true'" do
+      params = {"active" => "true"}
+      result = params.to_t("active", Bool)
+      result.should eq(true)
+    end
+
+    it "converts to Bool successfully with 'false'" do
+      params = {"active" => "false"}
+      result = params.to_t("active", Bool)
+      result.should eq(false)
+    end
+
+    it "converts to Bool successfully with '1'" do
+      params = {"active" => "1"}
+      result = params.to_t("active", Bool)
+      result.should eq(true)
+    end
+
+    it "converts to Bool successfully with '0'" do
+      params = {"active" => "0"}
+      result = params.to_t("active", Bool)
+      result.should eq(false)
+    end
+
+    it "converts to Bool successfully with 'yes'" do
+      params = {"active" => "yes"}
+      result = params.to_t("active", Bool)
+      result.should eq(true)
+    end
+
+    it "converts to Bool successfully with 'no'" do
+      params = {"active" => "no"}
+      result = params.to_t("active", Bool)
+      result.should eq(false)
+    end
+
+    it "raises BadRequest for invalid Bool" do
+      params = {"active" => "maybe"}
+      expect_raises(LF::BadRequest, "Invalid value for parameter 'active': expected Bool") do
+        params.to_t("active", Bool)
+      end
+    end
+
+    it "converts to UUID successfully" do
+      params = {"request_id" => "550e8400-e29b-41d4-a716-446655440000"}
+      result = params.to_t("request_id", UUID)
+      result.should eq(UUID.new("550e8400-e29b-41d4-a716-446655440000"))
+    end
+
+    it "raises BadRequest for invalid UUID" do
+      params = {"request_id" => "not-a-uuid"}
+      expect_raises(LF::BadRequest, "Invalid value for parameter 'request_id': expected UUID") do
+        params.to_t("request_id", UUID)
+      end
+    end
+
+    it "converts to String successfully" do
+      params = {"name" => "John Doe"}
+      result = params.to_t("name", String)
+      result.should eq("John Doe")
+    end
+
+    it "raises BadRequest for missing parameter" do
+      params = {} of String => String
+      expect_raises(LF::BadRequest, "Missing required parameter 'id'") do
+        params.to_t("id", Int32)
+      end
+    end
+  end
+
+  describe "APIRoute parameter binding" do
+    it "returns 200 for valid Int32 parameter" do
+      app = LF::LFApi.new do |router|
+        TestAPIWithParams.new.setup_routes(router)
+      end
+
+      io = IO::Memory.new
+      request = HTTP::Request.new("GET", "/users/123")
+      response = HTTP::Server::Response.new(io)
+      context = HTTP::Server::Context.new(request, response)
+      context.state = LF::DI::AnnotationApplicationContext.new
+
+      app.call(context)
+      response.close
+
+      response.status.should eq(HTTP::Status::OK)
+      body = io.to_s.split("\r\n\r\n", 2)[1]
+      body.should eq("User 123")
+    end
+
+    it "returns 400 for invalid Int32 parameter" do
+      app = LF::LFApi.new do |router|
+        TestAPIWithParams.new.setup_routes(router)
+      end
+
+      io = IO::Memory.new
+      request = HTTP::Request.new("GET", "/users/abc")
+      response = HTTP::Server::Response.new(io)
+      context = HTTP::Server::Context.new(request, response)
+      context.state = LF::DI::AnnotationApplicationContext.new
+
+      app.call(context)
+      response.close
+
+      response.status.should eq(HTTP::Status::BAD_REQUEST)
+      body = io.to_s.split("\r\n\r\n", 2)[1]
+      body.should eq("Invalid value for parameter 'id': expected Int32")
+    end
+
+    it "returns 200 for valid Int64 parameter" do
+      app = LF::LFApi.new do |router|
+        TestAPIWithParams.new.setup_routes(router)
+      end
+
+      io = IO::Memory.new
+      request = HTTP::Request.new("GET", "/items/9223372036854775807")
+      response = HTTP::Server::Response.new(io)
+      context = HTTP::Server::Context.new(request, response)
+      context.state = LF::DI::AnnotationApplicationContext.new
+
+      app.call(context)
+      response.close
+
+      response.status.should eq(HTTP::Status::OK)
+      body = io.to_s.split("\r\n\r\n", 2)[1]
+      body.should eq("Item 9223372036854775807")
+    end
+
+    it "returns 200 for valid UUID parameter" do
+      app = LF::LFApi.new do |router|
+        TestAPIWithParams.new.setup_routes(router)
+      end
+
+      io = IO::Memory.new
+      request = HTTP::Request.new("GET", "/products/550e8400-e29b-41d4-a716-446655440000")
+      response = HTTP::Server::Response.new(io)
+      context = HTTP::Server::Context.new(request, response)
+      context.state = LF::DI::AnnotationApplicationContext.new
+
+      app.call(context)
+      response.close
+
+      response.status.should eq(HTTP::Status::OK)
+      body = io.to_s.split("\r\n\r\n", 2)[1]
+      body.should eq("Product 550e8400-e29b-41d4-a716-446655440000")
+    end
+
+    it "returns 400 for invalid UUID parameter" do
+      app = LF::LFApi.new do |router|
+        TestAPIWithParams.new.setup_routes(router)
+      end
+
+      io = IO::Memory.new
+      request = HTTP::Request.new("GET", "/products/not-a-uuid")
+      response = HTTP::Server::Response.new(io)
+      context = HTTP::Server::Context.new(request, response)
+      context.state = LF::DI::AnnotationApplicationContext.new
+
+      app.call(context)
+      response.close
+
+      response.status.should eq(HTTP::Status::BAD_REQUEST)
+      body = io.to_s.split("\r\n\r\n", 2)[1]
+      body.should eq("Invalid value for parameter 'product_id': expected UUID")
+    end
+
+    it "returns 200 for valid Bool parameter (true)" do
+      app = LF::LFApi.new do |router|
+        TestAPIWithParams.new.setup_routes(router)
+      end
+
+      io = IO::Memory.new
+      request = HTTP::Request.new("GET", "/settings/notifications?enabled=true")
+      response = HTTP::Server::Response.new(io)
+      context = HTTP::Server::Context.new(request, response)
+      context.state = LF::DI::AnnotationApplicationContext.new
+
+      app.call(context)
+      response.close
+
+      response.status.should eq(HTTP::Status::OK)
+      body = io.to_s.split("\r\n\r\n", 2)[1]
+      body.should eq("Setting notifications is true")
+    end
+
+    it "returns 200 for valid Bool parameter (false)" do
+      app = LF::LFApi.new do |router|
+        TestAPIWithParams.new.setup_routes(router)
+      end
+
+      io = IO::Memory.new
+      request = HTTP::Request.new("GET", "/settings/notifications?enabled=false")
+      response = HTTP::Server::Response.new(io)
+      context = HTTP::Server::Context.new(request, response)
+      context.state = LF::DI::AnnotationApplicationContext.new
+
+      app.call(context)
+      response.close
+
+      response.status.should eq(HTTP::Status::OK)
+      body = io.to_s.split("\r\n\r\n", 2)[1]
+      body.should eq("Setting notifications is false")
+    end
+
+    it "returns 400 for invalid Bool parameter" do
+      app = LF::LFApi.new do |router|
+        TestAPIWithParams.new.setup_routes(router)
+      end
+
+      io = IO::Memory.new
+      request = HTTP::Request.new("GET", "/settings/notifications?enabled=maybe")
+      response = HTTP::Server::Response.new(io)
+      context = HTTP::Server::Context.new(request, response)
+      context.state = LF::DI::AnnotationApplicationContext.new
+
+      app.call(context)
+      response.close
+
+      response.status.should eq(HTTP::Status::BAD_REQUEST)
+      body = io.to_s.split("\r\n\r\n", 2)[1]
+      body.should eq("Invalid value for parameter 'enabled': expected Bool")
+    end
+
+    it "returns 400 for missing required parameter" do
+      app = LF::LFApi.new do |router|
+        TestAPIWithParams.new.setup_routes(router)
+      end
+
+      io = IO::Memory.new
+      request = HTTP::Request.new("GET", "/settings/notifications")
+      response = HTTP::Server::Response.new(io)
+      context = HTTP::Server::Context.new(request, response)
+      context.state = LF::DI::AnnotationApplicationContext.new
+
+      app.call(context)
+      response.close
+
+      response.status.should eq(HTTP::Status::BAD_REQUEST)
+      body = io.to_s.split("\r\n\r\n", 2)[1]
+      body.should eq("Missing required parameter 'enabled'")
+    end
   end
 end

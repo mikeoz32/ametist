@@ -1,6 +1,7 @@
 require "http/server"
 require "json"
 require "fiber"
+require "uuid"
 
 require "./lfapi/di"
 require "./lfapi/trie"
@@ -55,28 +56,70 @@ require "./lfapi/trie"
 
 class Hash
   def to_t(key, type)
+    raise LF::BadRequest.new("Missing required parameter '#{key}'") unless self.has_key?(key)
+
+    value = self[key]
+
     {% begin %}
       case type
-        {% for m, t in {to_i: Int32, to_f: Float32, to_s: String} %}
-            when {{t.id}}.class
-              self[key].{{m.id}}
-          {% end %}
+      when Int32.class
+        begin
+          value.to_i
+        rescue ArgumentError
+          raise LF::BadRequest.new("Invalid value for parameter '#{key}': expected Int32")
+        end
+      when Int64.class
+        begin
+          value.to_i64
+        rescue ArgumentError
+          raise LF::BadRequest.new("Invalid value for parameter '#{key}': expected Int64")
+        end
+      when Float32.class
+        begin
+          value.to_f32
+        rescue ArgumentError
+          raise LF::BadRequest.new("Invalid value for parameter '#{key}': expected Float32")
+        end
+      when Float64.class
+        begin
+          value.to_f64
+        rescue ArgumentError
+          raise LF::BadRequest.new("Invalid value for parameter '#{key}': expected Float64")
+        end
+      when Bool.class
+        value_str = value.to_s.downcase
+        case value_str
+        when "true", "1", "yes"
+          true
+        when "false", "0", "no"
+          false
+        else
+          raise LF::BadRequest.new("Invalid value for parameter '#{key}': expected Bool")
+        end
+      when UUID.class
+        begin
+          UUID.new(value)
+        rescue ArgumentError
+          raise LF::BadRequest.new("Invalid value for parameter '#{key}': expected UUID")
+        end
+      when String.class
+        value.to_s
       else
-        raise "Unsupported type: #{type}"
+        raise LF::InternalServerError.new("Unsupported parameter type: #{type}")
       end
     {% end %}
   end
 end
 
-class HTTP::Server
-  @dispatcher : Fiber::ExecutionContext::Parallel = Fiber::ExecutionContext::Parallel.new("http", 24)
-
-  protected def dispatch(io)
-    @dispatcher.spawn do
-      handle_client(io)
-    end
-  end
-end
+# class HTTP::Server
+#   @dispatcher : Fiber::ExecutionContext::Parallel = Fiber::ExecutionContext::Parallel.new("http", 24)
+#
+#   protected def dispatch(io)
+#     @dispatcher.spawn do
+#       handle_client(io)
+#     end
+#   end
+# end
 
 class HTTP::Server::Context
   property state : LF::DI::AnnotationApplicationContext?
@@ -203,32 +246,47 @@ module LF
           {% for ann, idx in method.annotations(route_method) %}
              {% path = ann[0] || ann[:path] || raise "Missing path in #{method.name}" %}
              router.{{ router_method }}({{ path }}) do |ctx, _params|
-               {% for arg in method.args %}
-                {% if arg.name == "request" && arg.restriction.id == "HTTP::Request" %}
-                  {{ arg.name }} = ctx.request
-                {% else %}
-                 raise LF::InternalServerError.new("DI context not initialized") if ctx.state.nil?
-                 store = ctx.state.as(LF::DI::AnnotationApplicationContext)
-                 if store.has_key?("{{ arg.name }}") || _params.has_key?("{{ arg.name }}")
+               begin
+                 {% for arg in method.args %}
+                  {% if arg.name == "request" && arg.restriction.id == "HTTP::Request" %}
+                    {{ arg.name }} = ctx.request
+                  {% else %}
+                   raise LF::InternalServerError.new("DI context not initialized") if ctx.state.nil?
+                   store = ctx.state.as(LF::DI::AnnotationApplicationContext)
+                   source = nil
+
                    if _params.has_key?("{{ arg.name }}")
-                     store = _params
+                     source = _params
+                   elsif (query = ctx.request.query_params) && query.has_key?("{{ arg.name }}")
+                     source = query.to_h
+                   elsif store.has_key?("{{ arg.name }}")
+                     source = store
                    end
-                   {{ arg.name }} : {{ arg.restriction }} = store.to_t("{{ arg.name }}", {{ arg.restriction }}).as({{ arg.restriction.id }})
-                 else
-                   {% if parse_type(arg.restriction.stringify).resolve.ancestors.any? { |ancestor| ancestor.id == "JSON::Serializable" } %}
-                     raise "Bad Request" if ctx.request.body.nil?
-                     begin
-                     {{ arg.name }} = {{arg.restriction.id}}.from_json(ctx.request.body.as(IO))
-                     rescue e : JSON::SerializableError
-                       raise LF::BadRequest.new e.message.as(String)
-                     end
-                   {% else %}
-                     raise "Missing parameter: {{ arg.name }}"
-                   {% end %}
-                 end
-                {% end %}
-               {% end %}
-               ctx.response.print {{ method.name }}({% for arg in method.args %}{{ arg.name }},{% end %})
+
+                   if source
+                     {{ arg.name }} : {{ arg.restriction }} = source.to_t("{{ arg.name }}", {{ arg.restriction }}).as({{ arg.restriction.id }})
+                   else
+                     {% if parse_type(arg.restriction.stringify).resolve.ancestors.any? { |ancestor| ancestor.id == "JSON::Serializable" } %}
+                       raise "Bad Request" if ctx.request.body.nil?
+                       begin
+                       {{ arg.name }} = {{arg.restriction.id}}.from_json(ctx.request.body.as(IO))
+                       rescue e : JSON::SerializableError
+                         raise LF::BadRequest.new e.message.as(String)
+                       end
+                     {% else %}
+                       raise LF::BadRequest.new("Missing required parameter '{{ arg.name }}'")
+                     {% end %}
+                   end
+                  {% end %}
+                 {% end %}
+                 ctx.response.print {{ method.name }}({% for arg in method.args %}{{ arg.name }},{% end %})
+               rescue e : LF::BadRequest
+                 raise e
+               rescue e : LF::InternalServerError
+                 raise e
+               rescue e : Exception
+                 raise LF::InternalServerError.new("Error processing request: #{e.message}")
+               end
              end
           {% end %}
         {% end %}
