@@ -74,6 +74,8 @@ class StopProbe < Movie::AbstractBehavior(Symbol)
       @@mutex.synchronize { @@events << "#{@name}:pre_stop" }
     when Movie::PostStop
       @@mutex.synchronize { @@events << "#{@name}:post_stop" }
+    when Movie::Terminated
+      @@mutex.synchronize { @@events << "#{@name}:terminated" }
     end
   end
 end
@@ -245,6 +247,27 @@ describe Movie do
     end
 
     mutex.synchronize { count.should eq(1) }
+  end
+
+  it "notifies watchers when actor stops" do
+    system = Movie::ActorSystem(Symbol).new(Movie::Behaviors(Symbol).same)
+
+    parent_behavior = Movie::Behaviors(Symbol).setup do |context|
+      context.spawn(StopProbe.new("child"))
+      StopProbe.new("parent")
+    end
+
+    parent = system.spawn(parent_behavior)
+    watcher = system.spawn(StopProbe.new("watcher"))
+
+    parent.send_system(Movie::Watch.new(watcher).as(Movie::SystemMessage))
+
+    parent.send_system(Movie::STOP)
+
+    sleep(1.seconds)
+
+    events = StopProbe.events
+    events.includes?("watcher:terminated").should be_true
   end
 
 

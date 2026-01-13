@@ -229,8 +229,10 @@ module Movie
       if @pending_terminations > 0 && @pending_children.includes?(actor)
         @pending_children.delete(actor)
         @pending_terminations -= 1
-        STDERR.puts "actor=#{@ref.id} pending_terminations=#{@pending_terminations} pre_stop_completed=#{@pre_stop_completed}" if ENV["DEBUG_STOP"]?
+        # STDERR.puts "actor=#{@ref.id} pending_terminations=#{@pending_terminations} pre_stop_completed=#{@pre_stop_completed}" if ENV["DEBUG_STOP"]?
       end
+
+      @active_behavior.on_signal(message)
 
       finalize_stop_if_ready
     end
