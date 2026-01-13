@@ -59,15 +59,19 @@ module Movie
 
 
   abstract class ActorRefBase
+    @id : Int32
+    getter id : Int32
+
+    def initialize(id : Int32)
+      @id = id
+    end
+
     abstract def send_system(message : SystemMessage)
-    abstract def id : Int32
   end
 
   class ActorRef(T) < ActorRefBase
-    getter id : Int32
-
     def initialize(@system : AbstractActorSystem)
-      @id = @system.next_id()
+      super(@system.next_id())
     end
 
     def <<(message : T)
