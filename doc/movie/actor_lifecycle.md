@@ -417,50 +417,91 @@ Behavior                Context              Supervisor           Mailbox
 
 ### Supervision Strategies
 
-Supervision defines how parent actors handle child failures.
+Supervision defines how parent actors handle child failures. The runtime exposes an action (`SupervisionStrategy`) and a scope (`SupervisionScope`), plus restart limits with backoff.
 
 ```crystal
 module Movie
   enum SupervisionStrategy
-    # Restart the failed child
-    Restart
-    
-    # Resume the child without restarting
-    Resume
-    
-    # Stop the child permanently
-    Stop
-    
-    # Escalate to parent's supervisor
-    Escalate
+    RESTART   # restart the failed child/group
+    STOP      # stop permanently
+    RESUME    # swallow the fault and continue
+    ESCALATE  # propagate failure to parent
   end
 
-  enum SupervisionDirective
-    # Apply strategy to failed child only
-    OneForOne
-    
-    # Restart all children if one fails
-    AllForOne
-    
-    # Restart failed child and all children started after it
-    RestForOne
+  enum SupervisionScope
+    ONE_FOR_ONE  # act on the failing child only
+    ALL_FOR_ONE  # apply action to all siblings of the failing child
   end
 
-  class SupervisionConfig
-    property strategy : SupervisionStrategy
-    property directive : SupervisionDirective
-    property max_restarts : Int32
-    property time_window : Time::Span
-    
+  struct SupervisionConfig
+    getter strategy : SupervisionStrategy
+    getter scope : SupervisionScope
+    getter max_restarts : Int32
+    getter within : Time::Span
+    getter backoff_min : Time::Span
+    getter backoff_max : Time::Span
+    getter backoff_factor : Float64
+    getter jitter : Float64
+
     def initialize(
-      @strategy = SupervisionStrategy::Restart,
-      @directive = SupervisionDirective::OneForOne,
+      @strategy = SupervisionStrategy::RESTART,
+      @scope = SupervisionScope::ONE_FOR_ONE,
       @max_restarts = 3,
-      @time_window = 1.minute
+      @within = 1.second,
+      @backoff_min = 10.milliseconds,
+      @backoff_max = 1.second,
+      @backoff_factor = 2.0,
+      @jitter = 0.0
     )
     end
   end
 end
+```
+
+Backoff uses exponential growth (`backoff_min * backoff_factor^(attempt-1)`) clamped to `backoff_max`, with optional ±`jitter` scaling.
+
+**Example (per-actor config):**
+
+```crystal
+require "./src/movie"
+
+class FailingWorker < Movie::AbstractBehavior(Int32)
+  def receive(message, context)
+    raise "boom" if message == 1
+    Movie::Behaviors(Int32).same
+  end
+end
+
+# One-for-one with modest backoff
+one_for_one = Movie::SupervisionConfig.new(
+  strategy: Movie::SupervisionStrategy::RESTART,
+  scope: Movie::SupervisionScope::ONE_FOR_ONE,
+  max_restarts: 2,
+  within: 1.second,
+  backoff_min: 20.milliseconds,
+  backoff_max: 200.milliseconds,
+  backoff_factor: 2.0,
+  jitter: 0.1,
+)
+
+system = Movie::ActorSystem(Int32).new(Movie::Behaviors(Int32).same, Movie::RestartStrategy::RESTART, one_for_one)
+worker = system.spawn(FailingWorker.new, Movie::RestartStrategy::RESTART, one_for_one)
+
+# All-for-one supervising siblings with a slower backoff ramp
+all_for_one = Movie::SupervisionConfig.new(
+  strategy: Movie::SupervisionStrategy::RESTART,
+  scope: Movie::SupervisionScope::ALL_FOR_ONE,
+  max_restarts: 1,
+  within: 200.milliseconds,
+  backoff_min: 30.milliseconds,
+  backoff_max: 500.milliseconds,
+  backoff_factor: 2.0,
+  jitter: 0.0,
+)
+
+parent = system.spawn(Movie::Behaviors(Int32).same, Movie::RestartStrategy::RESTART, all_for_one)
+child_a = system.spawn(FailingWorker.new, Movie::RestartStrategy::RESTART, all_for_one)
+child_b = system.spawn(FailingWorker.new, Movie::RestartStrategy::RESTART, all_for_one)
 ```
 
 **Supervision Decision Tree:**
