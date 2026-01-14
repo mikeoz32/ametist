@@ -154,15 +154,49 @@ module Movie
         end
         @watchers.delete(unwatcher)
       when Failed
-        #Child failed
-        m = message.message.as(Failed)
-        # TODO: handle supervision strategy
+        handle_failed(message.message.as(Failed))
       when Terminated
         handle_terminated(message.message.as(Terminated))
       when Restart
         handle_restart(message.message.as(Restart))
       else
         # Unknown system message - send to dead letters or log
+      end
+    end
+
+    protected def handle_failed(message : Failed)
+      failed_actor = message.actor
+      cause = message.cause
+      case @supervision_config.scope
+      when SupervisionScope::ONE_FOR_ONE
+        apply_supervision_action(failed_actor, cause, @supervision_config.strategy)
+      when SupervisionScope::ALL_FOR_ONE
+        @children.each do |child|
+          apply_supervision_action(child, cause, @supervision_config.strategy)
+        end
+      end
+    end
+
+    protected def apply_supervision_action(actor : ActorRefBase, cause : Exception?, strategy : SupervisionStrategy)
+      case strategy
+      when SupervisionStrategy::RESTART
+        actor.send_system(Restart.new(cause).as(SystemMessage))
+      when SupervisionStrategy::STOP
+        actor.send_system(STOP)
+      when SupervisionStrategy::RESUME
+        resume_actor(actor)
+      when SupervisionStrategy::ESCALATE
+        escalate_failure(actor, cause)
+      end
+    end
+
+    protected def resume_actor(actor : ActorRefBase)
+      # Resume keeps the actor running without restart; placeholder for state reset if needed.
+    end
+
+    protected def escalate_failure(actor : ActorRefBase, cause : Exception?)
+      @watchers.each do |watcher|
+        watcher.send_system(Failed.new(actor, cause).as(SystemMessage))
       end
     end
 

@@ -131,6 +131,7 @@ module Movie
     @root : ActorRef(RootGuardianMessage)?
     @user_guardian : ActorRef(UserGuardianMessage)?
     @system_guardian : ActorRef(SystemGuardianMessage)?
+    @default_supervision_config : SupervisionConfig = SupervisionConfig.default
     def initialize()
       @actors = {} of Int32 => AbstractActorContext
       @mutex = Mutex.new
@@ -140,19 +141,19 @@ module Movie
     def start
       raise "System not initialized" unless @system
 
-      root_context = create_actor_context(RootGuardian.new)
+      root_context = create_actor_context(RootGuardian.new, RestartStrategy::RESTART, @default_supervision_config)
       root_ref = root_context.ref
       @root = root_ref
 
-      system_context = create_actor_context(SystemGuardian.new)
-      user_context = create_actor_context(UserGuardian.new)
+      system_context = create_actor_context(SystemGuardian.new, RestartStrategy::RESTART, @default_supervision_config)
+      user_context = create_actor_context(UserGuardian.new, RestartStrategy::RESTART, @default_supervision_config)
       root_context.attach_child system_context.ref
       root_context.attach_child user_context.ref
       @user_guardian = user_context.ref
       @system_guardian = system_context.ref
     end
 
-    protected def create_actor_context(behavior : AbstractBehavior(T), restart_strategy : RestartStrategy = RestartStrategy::RESTART, supervision_config : SupervisionConfig = SupervisionConfig.default) : ActorContext(T) forall T
+    protected def create_actor_context(behavior : AbstractBehavior(T), restart_strategy : RestartStrategy = RestartStrategy::RESTART, supervision_config : SupervisionConfig = @default_supervision_config) : ActorContext(T) forall T
       raise "System not initialized" unless @system
       ref = ActorRef(T).new(@system.as(ActorSystem))
       context = ActorContext(T).new(behavior, ref, @system.as(AbstractActorSystem), restart_strategy, supervision_config)
@@ -167,7 +168,11 @@ module Movie
       @system = system
     end
 
-    def spawn(behavior : AbstractBehavior(T), restart_strategy : RestartStrategy = RestartStrategy::RESTART, supervision_config : SupervisionConfig = SupervisionConfig.default) : ActorRef(T) forall T
+    def supervision_config=(config : SupervisionConfig)
+      @default_supervision_config = config
+    end
+
+    def spawn(behavior : AbstractBehavior(T), restart_strategy : RestartStrategy = RestartStrategy::RESTART, supervision_config : SupervisionConfig = @default_supervision_config) : ActorRef(T) forall T
       raise "System not initialized" unless @system
       raise "Root guardian not initialized" if @user_guardian.nil?
       root_context = context(@user_guardian.as(ActorRef(UserGuardianMessage)).id)
@@ -256,6 +261,7 @@ module Movie
 
     protected def initialize(main_behavior : AbstractBehavior(T), registry : ActorRegistry, restart_strategy : RestartStrategy, supervision_config : SupervisionConfig) forall T
       registry.system = self
+      registry.supervision_config = supervision_config
       @registry = registry
       @main_behavior = main_behavior
       @restart_strategy = restart_strategy

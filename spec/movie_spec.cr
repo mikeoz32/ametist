@@ -106,6 +106,31 @@ class RestartProbe < Movie::AbstractBehavior(Int32)
   end
 end
 
+class FailableProbe < Movie::AbstractBehavior(Symbol)
+  @@mutex = Mutex.new
+  @@states = {} of String => Array(String)
+
+  def self.reset
+    @@mutex.synchronize { @@states.clear }
+  end
+
+  def self.events(name : String)
+    @@mutex.synchronize { @@states[name]?.try(&.dup) || [] of String }
+  end
+
+  def initialize(@name : String)
+  end
+
+  def receive(message, context)
+    @@mutex.synchronize { (@@states[@name] ||= [] of String) << "#{@name}:msg:#{message}" }
+    raise "boom" if message == :fail
+    Movie::Behaviors(Symbol).same
+  end
+
+  def on_signal(signal)
+  end
+end
+
 
 
 def wait_until(timeout_ms : Int32 = 1000, interval_ms : Int32 = 5)
@@ -122,6 +147,7 @@ describe Movie do
     Child.reset
     StopProbe.reset
     RestartProbe.reset
+    FailableProbe.reset
   end
 
   it "should be able to spawn actors" do
@@ -263,14 +289,60 @@ describe Movie do
     StopProbe.events.any? { |e| e.includes?("watcher:terminated") }.should be_false
   end
 
+  it "supervises one-for-one STOP only the failing child" do
+    config = Movie::SupervisionConfig.new(strategy: Movie::SupervisionStrategy::STOP, scope: Movie::SupervisionScope::ONE_FOR_ONE)
+    system = Movie::ActorSystem(Symbol).new(Movie::Behaviors(Symbol).same, Movie::RestartStrategy::RESTART, config)
+
+    child1 = system.spawn(FailableProbe.new("c1"), Movie::RestartStrategy::STOP, config)
+    child2 = system.spawn(FailableProbe.new("c2"), Movie::RestartStrategy::STOP, config)
+
+    child1 << :fail
+
+    wait_until(timeout_ms: 500) do
+      if ctx = system.context(child1.id).as?(Movie::ActorContext(Symbol))
+        ctx.state.stopped?
+      else
+        false
+      end
+    end
+
+    ctx2 = system.context(child2.id).as?(Movie::ActorContext(Symbol))
+    ctx2.not_nil!.state.should eq(Movie::ActorContext::State::RUNNING)
+  end
+
+  it "supervises all-for-one RESTART restarting all children" do
+    config = Movie::SupervisionConfig.new(strategy: Movie::SupervisionStrategy::RESTART, scope: Movie::SupervisionScope::ALL_FOR_ONE)
+    system = Movie::ActorSystem(Int32).new(Movie::Behaviors(Int32).same, Movie::RestartStrategy::RESTART, config)
+
+    r1 = system.spawn(RestartProbe.new("r1"), Movie::RestartStrategy::STOP, config)
+    r2 = system.spawn(RestartProbe.new("r2"), Movie::RestartStrategy::STOP, config)
+
+    r1 << 1
+
+    wait_until(timeout_ms: 500) do
+      RestartProbe.signals.any? { |s| s.ends_with?("PreRestart") && s.starts_with?("r1:") }
+    end
+
+    wait_until(timeout_ms: 500) do
+      RestartProbe.signals.any? { |s| s.ends_with?("PreRestart") && s.starts_with?("r2:") }
+    end
+
+    r2 << 2
+
+    wait_until(timeout_ms: 500) do
+      RestartProbe.signals.includes?("r2:msg:2")
+    end
+  end
+
   it "applies restart strategy STOP" do
-    system = Movie::ActorSystem(Int32).new(Movie::Behaviors(Int32).same, Movie::RestartStrategy::STOP)
+    config = Movie::SupervisionConfig.new(strategy: Movie::SupervisionStrategy::STOP)
+    system = Movie::ActorSystem(Int32).new(Movie::Behaviors(Int32).same, Movie::RestartStrategy::STOP, config)
 
     behavior = Movie::Behaviors(Int32).receive do |message, context|
       raise "boom"
     end
 
-    actor = system.spawn(behavior, Movie::RestartStrategy::STOP)
+    actor = system.spawn(behavior, Movie::RestartStrategy::STOP, config)
 
     actor << 1
 
