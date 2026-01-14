@@ -31,6 +31,7 @@ module Movie
     @pending_terminations : Int32 = 0
     @pre_stop_completed : Bool = false
     @post_stop_sent : Bool = false
+    @restart_counters : Hash(Int32 | Symbol, NamedTuple(count: Int32, started_at: Time::Span)) = {} of Int32 | Symbol => NamedTuple(count: Int32, started_at: Time::Span)
 
     def initialize(behavior : AbstractBehavior(T), ref : ActorRef(T), @system : AbstractActorSystem, restart_strategy : RestartStrategy, supervision_config : SupervisionConfig = SupervisionConfig.default)
       @ref = ref.as(ActorRefBase)
@@ -167,6 +168,7 @@ module Movie
     protected def handle_failed(message : Failed)
       failed_actor = message.actor
       cause = message.cause
+      return if exceeded_restart_limit?(failed_actor, cause)
       case @supervision_config.scope
       when SupervisionScope::ONE_FOR_ONE
         apply_supervision_action(failed_actor, cause, @supervision_config.strategy)
@@ -175,6 +177,53 @@ module Movie
           apply_supervision_action(child, cause, @supervision_config.strategy)
         end
       end
+    end
+
+    private def exceeded_restart_limit?(failed_actor : ActorRefBase, cause : Exception?)
+      key = supervision_key(failed_actor)
+      now = Time.monotonic
+      entry = @restart_counters[key]?
+      if entry
+        elapsed = now - entry[:started_at]
+        if elapsed > @supervision_config.within
+          entry = {count: 0, started_at: now}
+        end
+      else
+        entry = {count: 0, started_at: now}
+      end
+
+      entry = {count: entry[:count] + 1, started_at: entry[:started_at]}
+      @restart_counters[key] = entry
+
+      if entry[:count] > @supervision_config.max_restarts
+        handle_restart_limit_exceeded(failed_actor, cause)
+        true
+      else
+        false
+      end
+    end
+
+    private def supervision_key(failed_actor : ActorRefBase) : Int32 | Symbol
+      case @supervision_config.scope
+      when SupervisionScope::ONE_FOR_ONE
+        failed_actor.id
+      when SupervisionScope::ALL_FOR_ONE
+        :all_for_one
+      else
+        :all_for_one
+      end
+    end
+
+    private def handle_restart_limit_exceeded(failed_actor : ActorRefBase, cause : Exception?)
+      case @supervision_config.scope
+      when SupervisionScope::ONE_FOR_ONE
+        failed_actor.send_system(STOP)
+      when SupervisionScope::ALL_FOR_ONE
+        @children.each do |child|
+          child.send_system(STOP)
+        end
+      end
+      escalate_failure(failed_actor, cause)
     end
 
     protected def apply_supervision_action(actor : ActorRefBase, cause : Exception?, strategy : SupervisionStrategy)

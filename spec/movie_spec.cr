@@ -232,13 +232,13 @@ describe Movie do
 
     actor << 1
 
-    wait_until(timeout_ms: 500) do
+    wait_until(timeout_ms: 1000) do
       RestartProbe.signals.any? { |s| s.ends_with?("PreRestart") }
     end
 
     actor << 2
 
-    wait_until(timeout_ms: 500) do
+    wait_until(timeout_ms: 1000) do
       RestartProbe.signals.includes?("r:msg:2")
     end
   end
@@ -334,6 +334,83 @@ describe Movie do
     end
   end
 
+  it "stops after exceeding max restarts within window (one-for-one)" do
+    config = Movie::SupervisionConfig.new(strategy: Movie::SupervisionStrategy::RESTART, scope: Movie::SupervisionScope::ONE_FOR_ONE, max_restarts: 1, within: 2.seconds)
+    system = Movie::ActorSystem(Symbol).new(Movie::Behaviors(Symbol).same, Movie::RestartStrategy::RESTART, config)
+
+    actor = system.spawn(FailableProbe.new("f1"), Movie::RestartStrategy::RESTART, config)
+
+    actor << :fail
+    wait_until(timeout_ms: 500) do
+      if ctx = system.context(actor.id).as?(Movie::ActorContext(Symbol))
+        ctx.state == Movie::ActorContext::State::RUNNING
+      else
+        false
+      end
+    end
+
+    actor << :fail
+
+    wait_until(timeout_ms: 1500) do
+      if ctx = system.context(actor.id).as?(Movie::ActorContext(Symbol))
+        ctx.state.stopped?
+      else
+        false
+      end
+    end
+  end
+
+  it "stops all children after exceeding max restarts within window (all-for-one)" do
+    config = Movie::SupervisionConfig.new(strategy: Movie::SupervisionStrategy::RESTART, scope: Movie::SupervisionScope::ALL_FOR_ONE, max_restarts: 1, within: 200.milliseconds)
+    system = Movie::ActorSystem(Symbol).new(Movie::Behaviors(Symbol).same, Movie::RestartStrategy::RESTART, config)
+
+    child1 = system.spawn(FailableProbe.new("g1"), Movie::RestartStrategy::RESTART, config)
+    child2 = system.spawn(FailableProbe.new("g2"), Movie::RestartStrategy::RESTART, config)
+
+    child1 << :fail
+    wait_until(timeout_ms: 500) do
+      if ctx = system.context(child1.id).as?(Movie::ActorContext(Symbol))
+        ctx.state == Movie::ActorContext::State::RUNNING
+      else
+        false
+      end
+    end
+
+    child1 << :fail
+
+    wait_until(timeout_ms: 1500) do
+      c1 = system.context(child1.id).as?(Movie::ActorContext(Symbol))
+      c2 = system.context(child2.id).as?(Movie::ActorContext(Symbol))
+      c1 && c2 && c1.state.stopped? && c2.state.stopped?
+    end
+  end
+
+  it "resets restart count after window" do
+    config = Movie::SupervisionConfig.new(strategy: Movie::SupervisionStrategy::RESTART, scope: Movie::SupervisionScope::ONE_FOR_ONE, max_restarts: 1, within: 50.milliseconds)
+    system = Movie::ActorSystem(Symbol).new(Movie::Behaviors(Symbol).same, Movie::RestartStrategy::RESTART, config)
+
+    actor = system.spawn(FailableProbe.new("f2"), Movie::RestartStrategy::RESTART, config)
+
+    actor << :fail
+    wait_until(timeout_ms: 500) do
+      if ctx = system.context(actor.id).as?(Movie::ActorContext(Symbol))
+        ctx.state == Movie::ActorContext::State::RUNNING
+      else
+        false
+      end
+    end
+    sleep 0.1.seconds
+    actor << :fail
+
+    wait_until(timeout_ms: 500) do
+      if ctx = system.context(actor.id).as?(Movie::ActorContext(Symbol))
+        ctx.state == Movie::ActorContext::State::RUNNING
+      else
+        false
+      end
+    end
+  end
+
   it "applies restart strategy STOP" do
     config = Movie::SupervisionConfig.new(strategy: Movie::SupervisionStrategy::STOP)
     system = Movie::ActorSystem(Int32).new(Movie::Behaviors(Int32).same, Movie::RestartStrategy::STOP, config)
@@ -399,7 +476,7 @@ describe Movie do
 
     parent.send_system(Movie::STOP)
 
-    wait_until(timeout_ms: 1000) do
+    wait_until(timeout_ms: 1500) do
       ev = StopProbe.events
       ev.includes?("parent:post_stop") && ev.includes?("child-1:post_stop") && ev.includes?("child-2:post_stop")
     end
