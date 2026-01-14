@@ -80,6 +80,9 @@ module Movie
 
     def attach_child(child : ActorRef(U)) forall U
       @children << child unless @children.includes?(child)
+      if child_ctx = @system.context(child.id)
+        child_ctx.as(ActorContext(U)).register_watcher(@ref)
+      end
       watch child
     end
 
@@ -88,6 +91,10 @@ module Movie
 
       @watching << actor
       actor.send_system(Watch.new(@ref).as(SystemMessage))
+    end
+
+    protected def register_watcher(actor : ActorRefBase)
+      @watchers << actor unless @watchers.includes?(actor)
     end
 
     def mailbox=(mailbox : Mailbox(T))
@@ -168,18 +175,20 @@ module Movie
     protected def handle_failed(message : Failed)
       failed_actor = message.actor
       cause = message.cause
-      return if exceeded_restart_limit?(failed_actor, cause)
+      return unless @children.includes?(failed_actor)
+      attempt, exceeded = track_restart(failed_actor, cause)
+      return if exceeded
       case @supervision_config.scope
       when SupervisionScope::ONE_FOR_ONE
-        apply_supervision_action(failed_actor, cause, @supervision_config.strategy)
+        apply_supervision_action(failed_actor, cause, @supervision_config.strategy, attempt)
       when SupervisionScope::ALL_FOR_ONE
         @children.each do |child|
-          apply_supervision_action(child, cause, @supervision_config.strategy)
+          apply_supervision_action(child, cause, @supervision_config.strategy, attempt)
         end
       end
     end
 
-    private def exceeded_restart_limit?(failed_actor : ActorRefBase, cause : Exception?)
+    private def track_restart(failed_actor : ActorRefBase, cause : Exception?) : {Int32, Bool}
       key = supervision_key(failed_actor)
       now = Time.monotonic
       entry = @restart_counters[key]?
@@ -197,9 +206,9 @@ module Movie
 
       if entry[:count] > @supervision_config.max_restarts
         handle_restart_limit_exceeded(failed_actor, cause)
-        true
+        {entry[:count], true}
       else
-        false
+        {entry[:count], false}
       end
     end
 
@@ -226,9 +235,11 @@ module Movie
       escalate_failure(failed_actor, cause)
     end
 
-    protected def apply_supervision_action(actor : ActorRefBase, cause : Exception?, strategy : SupervisionStrategy)
+    protected def apply_supervision_action(actor : ActorRefBase, cause : Exception?, strategy : SupervisionStrategy, attempt : Int32)
       case strategy
       when SupervisionStrategy::RESTART
+        delay = compute_backoff_delay(attempt)
+        sleep delay if delay > Time::Span.zero
         actor.send_system(Restart.new(cause).as(SystemMessage))
       when SupervisionStrategy::STOP
         actor.send_system(STOP)
@@ -246,6 +257,23 @@ module Movie
     protected def escalate_failure(actor : ActorRefBase, cause : Exception?)
       @watchers.each do |watcher|
         watcher.send_system(Failed.new(actor, cause).as(SystemMessage))
+      end
+    end
+
+    private def compute_backoff_delay(attempt : Int32) : Time::Span
+      base = @supervision_config.backoff_min * (@supervision_config.backoff_factor ** (attempt - 1))
+      clamped = {base, @supervision_config.backoff_max}.min
+      if @supervision_config.jitter > 0.0
+        j = @supervision_config.jitter
+        factor = 1.0 + (Random::DEFAULT.rand * 2.0 * j - j)
+        clamped *= factor
+      end
+      if clamped < Time::Span.zero
+        Time::Span.zero
+      elsif clamped > @supervision_config.backoff_max
+        @supervision_config.backoff_max
+      else
+        clamped
       end
     end
 
@@ -278,7 +306,7 @@ module Movie
     protected def apply_restart_strategy(ex : Exception)
       case @restart_strategy
       when RestartStrategy::RESTART
-        send_system_message(Restart.new(ex).as(SystemMessage))
+        # Supervision pipeline handles restart (with backoff). We only stop explicitly when configured to do so.
       when RestartStrategy::STOP
         send_system_message(STOP)
       end

@@ -106,6 +106,31 @@ class RestartProbe < Movie::AbstractBehavior(Int32)
   end
 end
 
+class TimedRestartProbe < Movie::AbstractBehavior(Int32)
+  @@pre_restarts = [] of Time::Span
+  @@mutex = Mutex.new
+
+  def self.reset
+    @@mutex.synchronize { @@pre_restarts.clear }
+  end
+
+  def self.pre_restarts
+    @@mutex.synchronize { @@pre_restarts.dup }
+  end
+
+  def receive(message, context)
+    raise "fail" if message == 1
+    Movie::Behaviors(Int32).same
+  end
+
+  def on_signal(signal)
+    case signal
+    when Movie::PreRestart
+      @@mutex.synchronize { @@pre_restarts << Time.monotonic }
+    end
+  end
+end
+
 class FailableProbe < Movie::AbstractBehavior(Symbol)
   @@mutex = Mutex.new
   @@states = {} of String => Array(String)
@@ -147,6 +172,7 @@ describe Movie do
     Child.reset
     StopProbe.reset
     RestartProbe.reset
+    TimedRestartProbe.reset
     FailableProbe.reset
   end
 
@@ -262,6 +288,36 @@ describe Movie do
     end
 
     RestartProbe.signals.includes?("r:msg:2").should be_false
+  end
+
+  it "applies backoff delay on restart" do
+    config = Movie::SupervisionConfig.new(
+      strategy: Movie::SupervisionStrategy::RESTART,
+      backoff_min: 30.milliseconds,
+      backoff_max: 60.milliseconds,
+      backoff_factor: 2.0,
+      jitter: 0.0,
+    )
+
+    system = Movie::ActorSystem(Int32).new(Movie::Behaviors(Int32).same, Movie::RestartStrategy::RESTART, config)
+    actor = system.spawn(TimedRestartProbe.new, Movie::RestartStrategy::RESTART, config)
+
+    t0 = Time.monotonic
+    actor << 1
+
+    wait_until(timeout_ms: 1000) { TimedRestartProbe.pre_restarts.size >= 1 }
+
+    delay1 = TimedRestartProbe.pre_restarts[0] - t0
+    (delay1 >= 0.025.seconds).should be_true
+
+    # second failure to observe backoff growth (should be >= backoff_min * factor but capped)
+    t1 = Time.monotonic
+    actor << 1
+
+    wait_until(timeout_ms: 1000) { TimedRestartProbe.pre_restarts.size >= 2 }
+
+    delay2 = TimedRestartProbe.pre_restarts[1] - t1
+    (delay2 >= 0.05.seconds).should be_true
   end
 
   it "does not notify watchers with Terminated on restart" do

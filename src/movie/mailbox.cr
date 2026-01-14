@@ -41,17 +41,13 @@ module Movie
     end
 
     def send(message)
-        @inbox.enqueue(message)
-        # @dispatcher.dispatch(self) unless @scheduled
-        # @scheduled = true
-        schedule_dispatch
+      @inbox.enqueue(message)
+      schedule_dispatch
     end
 
     def send_system(message)
-        @system.enqueue(message)
-        # @dispatcher.dispatch(self) unless @scheduled
-        # @scheduled = true
-        schedule_dispatch
+      @system.enqueue(message)
+      schedule_dispatch
     end
 
     def <<(message)
