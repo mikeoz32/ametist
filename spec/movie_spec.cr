@@ -217,6 +217,27 @@ describe Movie do
     end
   end
 
+  it "drops queued user messages during restart and handles system first" do
+    system = Movie::ActorSystem(Int32).new(Movie::Behaviors(Int32).same, Movie::RestartStrategy::RESTART)
+
+    actor = system.spawn(RestartProbe.new("r"), Movie::RestartStrategy::RESTART)
+
+    actor << 1
+    actor << 2
+
+    wait_until(timeout_ms: 500) do
+      RestartProbe.signals.any? { |s| s.ends_with?("PreRestart") }
+    end
+
+    actor << 3
+
+    wait_until(timeout_ms: 500) do
+      RestartProbe.signals.includes?("r:msg:3")
+    end
+
+    RestartProbe.signals.includes?("r:msg:2").should be_false
+  end
+
   it "applies restart strategy STOP" do
     system = Movie::ActorSystem(Int32).new(Movie::Behaviors(Int32).same, Movie::RestartStrategy::STOP)
 
