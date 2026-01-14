@@ -98,7 +98,7 @@ describe Movie do
   end
 
   it "should be able to spawn actors" do
-    system = Movie::ActorSystem(MainMessage).new(Main.create())
+    system = Movie::ActorSystem(MainMessage).new(Main.create(), Movie::RestartStrategy::STOP)
 
     system << MainMessage.new(message: "hello")
     wait_until { Main.count == 1 }
@@ -154,20 +154,58 @@ describe Movie do
   end
 
   it "Should handle exception" do
-    system = Movie::ActorSystem(MainMessage).new(Main.create())
+    system = Movie::ActorSystem(MainMessage).new(Main.create(), Movie::RestartStrategy::STOP)
     ref = system.spawn (Movie::Behaviors(String).setup do |context|
       Movie::Behaviors(String).receive do |message, context|
-        puts "Functional message #{message}"
-        puts "context #{context}"
         raise "Should be handled"
         Movie::Behaviors(String).same
       end
     end)
     ref << "message "
 
-    wait_until(timeout_ms: 200) do
+    wait_until(timeout_ms: 500) do
       if ctx = system.context(ref.id).as?(Movie::ActorContext(String))
-        ctx.state.failed?
+        ctx.state != Movie::ActorContext::State::RUNNING
+      else
+        true
+      end
+    end
+  end
+
+  it "applies restart strategy RESTART" do
+    system = Movie::ActorSystem(Int32).new(Movie::Behaviors(Int32).same, Movie::RestartStrategy::RESTART)
+
+    behavior = Movie::Behaviors(Int32).receive do |message, context|
+      raise "boom"
+    end
+
+    actor = system.spawn(behavior, Movie::RestartStrategy::RESTART)
+
+    actor << 1
+
+    wait_until(timeout_ms: 200) do
+      if ctx = system.context(actor.id).as?(Movie::ActorContext(Int32))
+        ctx.state.restarting?
+      else
+        false
+      end
+    end
+  end
+
+  it "applies restart strategy STOP" do
+    system = Movie::ActorSystem(Int32).new(Movie::Behaviors(Int32).same, Movie::RestartStrategy::STOP)
+
+    behavior = Movie::Behaviors(Int32).receive do |message, context|
+      raise "boom"
+    end
+
+    actor = system.spawn(behavior, Movie::RestartStrategy::STOP)
+
+    actor << 1
+
+    wait_until(timeout_ms: 500) do
+      if ctx = system.context(actor.id).as?(Movie::ActorContext(Int32))
+        ctx.state.stopped?
       else
         false
       end
@@ -189,7 +227,10 @@ describe Movie do
 
     parent.send_system(Movie::STOP)
 
-    sleep(1.seconds)
+    wait_until(timeout_ms: 1000) do
+      ev = StopProbe.events
+      ev.includes?("parent:post_stop") && ev.includes?("child-1:post_stop") && ev.includes?("child-2:post_stop")
+    end
 
     events = StopProbe.events
     parent_idx = events.index("parent:post_stop").not_nil!

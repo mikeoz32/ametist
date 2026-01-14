@@ -152,10 +152,10 @@ module Movie
       @system_guardian = system_context.ref
     end
 
-    protected def create_actor_context(behavior : AbstractBehavior(T)) : ActorContext(T) forall T
+    protected def create_actor_context(behavior : AbstractBehavior(T), restart_strategy : RestartStrategy = RestartStrategy::RESTART) : ActorContext(T) forall T
       raise "System not initialized" unless @system
       ref = ActorRef(T).new(@system.as(ActorSystem))
-      context = ActorContext(T).new(behavior, ref, @system.as(AbstractActorSystem))
+      context = ActorContext(T).new(behavior, ref, @system.as(AbstractActorSystem), restart_strategy)
       @mutex.synchronize do
         @actors[ref.id] = context
       end
@@ -167,12 +167,12 @@ module Movie
       @system = system
     end
 
-    def spawn(behavior : AbstractBehavior(T)) : ActorRef(T) forall T
+    def spawn(behavior : AbstractBehavior(T), restart_strategy : RestartStrategy = RestartStrategy::RESTART) : ActorRef(T) forall T
       raise "System not initialized" unless @system
       raise "Root guardian not initialized" if @user_guardian.nil?
       root_context = context(@user_guardian.as(ActorRef(UserGuardianMessage)).id)
       raise "Root context not found" unless root_context
-      child = create_actor_context(behavior)
+      child = create_actor_context(behavior, restart_strategy)
       root_context.as(ActorContext(UserGuardianMessage)).attach_child(child.ref)
       child.ref
     end
@@ -239,11 +239,12 @@ module Movie
   end
 
   class ActorSystem(T) < AbstractActorSystem
+    @restart_strategy : RestartStrategy = RestartStrategy::RESTART
 
-    def self.new(main_behavior : AbstractBehavior(T)) forall T
+    def self.new(main_behavior : AbstractBehavior(T), restart_strategy : RestartStrategy = RestartStrategy::RESTART) forall T
       registry = ActorRegistry.new()
-      system = ActorSystem(T).new(main_behavior, registry)
-      system.initialize(main_behavior, registry)
+      system = ActorSystem(T).allocate
+      system.initialize(main_behavior, registry, restart_strategy)
       registry.start
       system.bootstrap_main
       system
@@ -252,16 +253,17 @@ module Movie
     @root : ActorRef(T)?
     @main_behavior : AbstractBehavior(T)?
 
-    protected def initialize(main_behavior : AbstractBehavior(T), registry : ActorRegistry) forall T
+    protected def initialize(main_behavior : AbstractBehavior(T), registry : ActorRegistry, restart_strategy : RestartStrategy) forall T
       registry.system = self
       @registry = registry
       @main_behavior = main_behavior
+      @restart_strategy = restart_strategy
       # @root = registry.spawn(main_behavior)
     end
 
     protected def bootstrap_main
       behavior = @main_behavior || raise "Main behavior not initialized"
-      @root ||= spawn(behavior)
+      @root ||= spawn(behavior, @restart_strategy)
     end
 
 
@@ -271,9 +273,9 @@ module Movie
       end
     end
 
-    def spawn(behavior : AbstractBehavior(U)) : ActorRef(U) forall U
+    def spawn(behavior : AbstractBehavior(U), restart_strategy : RestartStrategy = RestartStrategy::RESTART) : ActorRef(U) forall U
       raise "System not initialized" unless @registry
-      @registry.as(ActorRegistry).spawn(behavior)
+      @registry.as(ActorRegistry).spawn(behavior, restart_strategy)
     end
   end
 

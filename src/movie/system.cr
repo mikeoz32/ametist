@@ -57,6 +57,11 @@ module Movie
     end
   end
 
+  enum RestartStrategy
+    RESTART
+    STOP
+  end
+
   # Supervision Commands
   class Watch < SystemMessage
     # request actor to watch another actor

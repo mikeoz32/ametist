@@ -20,6 +20,7 @@ module Movie
 
     @mailbox : Mailbox(T)?
     @ref : ActorRefBase
+    @restart_strategy : RestartStrategy
 
     @children : Array(ActorRefBase) = [] of ActorRefBase
     @watching : Array(ActorRefBase) = [] of ActorRefBase
@@ -29,10 +30,11 @@ module Movie
     @pre_stop_completed : Bool = false
     @post_stop_sent : Bool = false
 
-    def initialize(behavior : AbstractBehavior(T), ref : ActorRef(T), @system : AbstractActorSystem)
+    def initialize(behavior : AbstractBehavior(T), ref : ActorRef(T), @system : AbstractActorSystem, restart_strategy : RestartStrategy)
       @ref = ref.as(ActorRefBase)
       @behavior = behavior
       @active_behavior = behavior
+      @restart_strategy = restart_strategy
       @log = Log.for(@ref.id.to_s)
     end
 
@@ -121,6 +123,7 @@ module Movie
       log.error(exception: ex) { "Error handling message" }
       notify_for_failure(ex)
       transition_to(State::FAILED)
+      apply_restart_strategy(ex)
     end
 
     def on_system_message(message : Envelope(SystemMessage))
@@ -153,6 +156,8 @@ module Movie
         # TODO: handle supervision strategy
       when Terminated
         handle_terminated(message.message.as(Terminated))
+      when Restart
+        handle_restart(message.message.as(Restart))
       else
         # Unknown system message - send to dead letters or log
       end
@@ -181,6 +186,15 @@ module Movie
     protected def notify_for_failure(ex : Exception)
       @watchers.each do |watcher|
         watcher.send_system(Failed.new(@ref, ex).as(SystemMessage))
+      end
+    end
+
+    protected def apply_restart_strategy(ex : Exception)
+      case @restart_strategy
+      when RestartStrategy::RESTART
+        send_system_message(Restart.new(ex).as(SystemMessage))
+      when RestartStrategy::STOP
+        send_system_message(STOP)
       end
     end
 
@@ -235,6 +249,11 @@ module Movie
       @active_behavior.on_signal(message)
 
       finalize_stop_if_ready
+    end
+
+    protected def handle_restart(message : Restart)
+      transition_to(State::RESTARTING)
+      # Full restart lifecycle implemented in subsequent tasks (PreRestart/PostStop/purge/reinit/PreStart/PostStart)
     end
 
     protected def initiate_children_stop
