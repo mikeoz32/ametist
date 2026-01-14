@@ -108,7 +108,7 @@ module Movie
     end
 
     def on_message(message : Envelope(T))
-      if @state == State::STOPPING || @state == State::STOPPED || @state == State::FAILED || @state == State::TERMINATED
+      if @state == State::STOPPING || @state == State::STOPPED || @state == State::FAILED || @state == State::TERMINATED || @state == State::RESTARTING
         log.warn { "Dropping message #{message.message.inspect} from #{message.sender} in state #{@state}" }
         return
       end
@@ -253,7 +253,15 @@ module Movie
 
     protected def handle_restart(message : Restart)
       transition_to(State::RESTARTING)
-      # Full restart lifecycle implemented in subsequent tasks (PreRestart/PostStop/purge/reinit/PreStart/PostStart)
+      cause = message.cause
+      @active_behavior.on_signal(PreRestart.new(cause))
+      @active_behavior.on_signal(POST_STOP)
+      if mb = @mailbox
+        mb.purge_inbox
+      end
+      @state = State::STARTING
+      handle_pre_start
+      handle_post_start
     end
 
     protected def initiate_children_stop

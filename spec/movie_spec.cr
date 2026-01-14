@@ -80,6 +80,32 @@ class StopProbe < Movie::AbstractBehavior(Symbol)
   end
 end
 
+class RestartProbe < Movie::AbstractBehavior(Int32)
+  @@signals = [] of String
+  @@mutex = Mutex.new
+
+  def self.reset
+    @@mutex.synchronize { @@signals.clear }
+  end
+
+  def self.signals
+    @@mutex.synchronize { @@signals.dup }
+  end
+
+  def initialize(@name : String)
+  end
+
+  def receive(message, context)
+    raise "fail" if message == 1
+    @@mutex.synchronize { @@signals << "#{@name}:msg:#{message}" }
+    Movie::Behaviors(Int32).same
+  end
+
+  def on_signal(signal)
+    @@mutex.synchronize { @@signals << "#{@name}:signal:#{signal.class}" }
+  end
+end
+
 
 
 def wait_until(timeout_ms : Int32 = 1000, interval_ms : Int32 = 5)
@@ -95,6 +121,7 @@ describe Movie do
     Main.reset
     Child.reset
     StopProbe.reset
+    RestartProbe.reset
   end
 
   it "should be able to spawn actors" do
@@ -175,20 +202,18 @@ describe Movie do
   it "applies restart strategy RESTART" do
     system = Movie::ActorSystem(Int32).new(Movie::Behaviors(Int32).same, Movie::RestartStrategy::RESTART)
 
-    behavior = Movie::Behaviors(Int32).receive do |message, context|
-      raise "boom"
-    end
-
-    actor = system.spawn(behavior, Movie::RestartStrategy::RESTART)
+    actor = system.spawn(RestartProbe.new("r"), Movie::RestartStrategy::RESTART)
 
     actor << 1
 
-    wait_until(timeout_ms: 200) do
-      if ctx = system.context(actor.id).as?(Movie::ActorContext(Int32))
-        ctx.state.restarting?
-      else
-        false
-      end
+    wait_until(timeout_ms: 500) do
+      RestartProbe.signals.any? { |s| s.ends_with?("PreRestart") }
+    end
+
+    actor << 2
+
+    wait_until(timeout_ms: 500) do
+      RestartProbe.signals.includes?("r:msg:2")
     end
   end
 

@@ -58,6 +58,10 @@ module Movie
       send(message)
     end
 
+    def purge_inbox
+      @inbox = Queue(Envelope(T)).new
+    end
+
     private def schedule_dispatch
       return if @scheduled || @processing
       @dispatcher.dispatch(self)
