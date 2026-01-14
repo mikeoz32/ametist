@@ -238,6 +238,31 @@ describe Movie do
     RestartProbe.signals.includes?("r:msg:2").should be_false
   end
 
+  it "does not notify watchers with Terminated on restart" do
+    system = Movie::ActorSystem(Int32).new(Movie::Behaviors(Int32).same, Movie::RestartStrategy::RESTART)
+
+    actor = system.spawn(RestartProbe.new("r"), Movie::RestartStrategy::RESTART)
+    watcher = system.spawn(StopProbe.new("watcher"))
+
+    actor.send_system(Movie::Watch.new(watcher).as(Movie::SystemMessage))
+
+    actor << 1
+
+    wait_until(timeout_ms: 500) do
+      RestartProbe.signals.any? { |s| s.ends_with?("PreRestart") }
+    end
+
+    StopProbe.events.any? { |e| e.includes?("watcher:terminated") }.should be_false
+
+    actor << 2
+
+    wait_until(timeout_ms: 500) do
+      RestartProbe.signals.includes?("r:msg:2")
+    end
+
+    StopProbe.events.any? { |e| e.includes?("watcher:terminated") }.should be_false
+  end
+
   it "applies restart strategy STOP" do
     system = Movie::ActorSystem(Int32).new(Movie::Behaviors(Int32).same, Movie::RestartStrategy::STOP)
 
