@@ -283,6 +283,35 @@ describe Movie do
     end
   end
 
+  it "stores supervision config on actor context" do
+    config = Movie::SupervisionConfig.new(
+      strategy: Movie::SupervisionStrategy::STOP,
+      scope: Movie::SupervisionScope::ALL_FOR_ONE,
+      max_restarts: 5,
+      within: 2.seconds,
+      backoff_min: 20.milliseconds,
+      backoff_max: 2.seconds,
+      backoff_factor: 1.5,
+      jitter: 0.2,
+    )
+
+    system = Movie::ActorSystem(Int32).new(Movie::Behaviors(Int32).same, Movie::RestartStrategy::RESTART, config)
+    actor = system.spawn(Movie::Behaviors(Int32).same, Movie::RestartStrategy::STOP, config)
+
+    ctx = system.context(actor.id).as?(Movie::ActorContext(Int32))
+    ctx.should_not be_nil
+    cfg = ctx.not_nil!.supervision_config
+
+    cfg.strategy.should eq config.strategy
+    cfg.scope.should eq config.scope
+    cfg.max_restarts.should eq config.max_restarts
+    cfg.within.should eq config.within
+    cfg.backoff_min.should eq config.backoff_min
+    cfg.backoff_max.should eq config.backoff_max
+    cfg.backoff_factor.should be_close(config.backoff_factor, 0.0001)
+    cfg.jitter.should be_close(config.jitter, 0.0001)
+  end
+
   it "waits for children to terminate before finishing parent stop" do
     system = Movie::ActorSystem(Symbol).new(Movie::Behaviors(Symbol).same)
 

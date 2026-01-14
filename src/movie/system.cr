@@ -62,6 +62,51 @@ module Movie
     STOP
   end
 
+  enum SupervisionStrategy
+    RESTART
+    STOP
+    RESUME
+    ESCALATE
+  end
+
+  enum SupervisionScope
+    ONE_FOR_ONE
+    ALL_FOR_ONE
+  end
+
+  struct SupervisionConfig
+    getter strategy : SupervisionStrategy
+    getter scope : SupervisionScope
+    getter max_restarts : Int32
+    getter within : Time::Span
+    getter backoff_min : Time::Span
+    getter backoff_max : Time::Span
+    getter backoff_factor : Float64
+    getter jitter : Float64
+
+    def initialize(strategy : SupervisionStrategy = SupervisionStrategy::RESTART,
+                   scope : SupervisionScope = SupervisionScope::ONE_FOR_ONE,
+                   max_restarts : Int32 = 3,
+                   within : Time::Span = 1.second,
+                   backoff_min : Time::Span = 10.milliseconds,
+                   backoff_max : Time::Span = 1.second,
+                   backoff_factor : Float64 = 2.0,
+                   jitter : Float64 = 0.0)
+      @strategy = strategy
+      @scope = scope
+      @max_restarts = max_restarts
+      @within = within
+      @backoff_min = backoff_min
+      @backoff_max = backoff_max
+      @backoff_factor = backoff_factor
+      @jitter = jitter
+    end
+
+    def self.default
+      new
+    end
+  end
+
   # Supervision Commands
   class Watch < SystemMessage
     # request actor to watch another actor

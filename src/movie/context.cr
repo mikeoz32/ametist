@@ -4,6 +4,7 @@ module Movie
 
   class ActorContext(T) < AbstractActorContext
     getter log : Log
+    getter supervision_config : SupervisionConfig
 
     enum State
       CREATED
@@ -21,6 +22,7 @@ module Movie
     @mailbox : Mailbox(T)?
     @ref : ActorRefBase
     @restart_strategy : RestartStrategy
+    @supervision_config : SupervisionConfig
 
     @children : Array(ActorRefBase) = [] of ActorRefBase
     @watching : Array(ActorRefBase) = [] of ActorRefBase
@@ -30,11 +32,12 @@ module Movie
     @pre_stop_completed : Bool = false
     @post_stop_sent : Bool = false
 
-    def initialize(behavior : AbstractBehavior(T), ref : ActorRef(T), @system : AbstractActorSystem, restart_strategy : RestartStrategy)
+    def initialize(behavior : AbstractBehavior(T), ref : ActorRef(T), @system : AbstractActorSystem, restart_strategy : RestartStrategy, supervision_config : SupervisionConfig = SupervisionConfig.default)
       @ref = ref.as(ActorRefBase)
       @behavior = behavior
       @active_behavior = behavior
       @restart_strategy = restart_strategy
+      @supervision_config = supervision_config
       @log = Log.for(@ref.id.to_s)
     end
 
