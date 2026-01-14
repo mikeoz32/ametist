@@ -1,4 +1,5 @@
 require "fiber"
+require "log"
 require "./queue"
 
 require "./movie/behavior"

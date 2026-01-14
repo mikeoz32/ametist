@@ -69,9 +69,9 @@ module Movie
     end
 
 
-    def spawn(behavior : AbstractBehavior(U)) : ActorRef(U) forall U
+    def spawn(behavior : AbstractBehavior(U), restart_strategy : RestartStrategy = @restart_strategy, supervision_config : SupervisionConfig = @supervision_config) : ActorRef(U) forall U
       raise "System not initialized" unless @system
-      child = @system.spawn(behavior)
+      child = @system.spawn(behavior, restart_strategy, supervision_config)
 
       attach_child(child)
 

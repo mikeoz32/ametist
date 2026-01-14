@@ -18,9 +18,6 @@ one_for_one = Movie::SupervisionConfig.new(
   jitter: 0.1,
 )
 
-system = Movie::ActorSystem(Int32).new(Movie::Behaviors(Int32).same, Movie::RestartStrategy::RESTART, one_for_one)
-worker = system.spawn(FailingWorker.new, Movie::RestartStrategy::RESTART, one_for_one)
-
 all_for_one = Movie::SupervisionConfig.new(
   strategy: Movie::SupervisionStrategy::RESTART,
   scope: Movie::SupervisionScope::ALL_FOR_ONE,
@@ -32,10 +29,31 @@ all_for_one = Movie::SupervisionConfig.new(
   jitter: 0.0,
 )
 
-parent = system.spawn(Movie::Behaviors(Int32).same, Movie::RestartStrategy::RESTART, all_for_one)
-child_a = system.spawn(FailingWorker.new, Movie::RestartStrategy::RESTART, all_for_one)
-child_b = system.spawn(FailingWorker.new, Movie::RestartStrategy::RESTART, all_for_one)
+main_behavior = Movie::Behaviors(Int32).setup do |context|
+  worker = context.spawn(FailingWorker.new, Movie::RestartStrategy::RESTART, one_for_one)
+
+  parent = context.spawn(Movie::Behaviors(Int32).same, Movie::RestartStrategy::RESTART, all_for_one)
+  child_a = context.spawn(FailingWorker.new, Movie::RestartStrategy::RESTART, all_for_one)
+  child_b = context.spawn(FailingWorker.new, Movie::RestartStrategy::RESTART, all_for_one)
+  parent << 0 # keep parent alive
+
+  # Send integers to main to route failures into the supervised children.
+  Movie::Behaviors(Int32).receive do |message, ctx|
+    case message
+    when 1
+      worker << 1
+    when 2
+      child_a << 1
+    when 3
+      child_b << 1
+    end
+    Movie::Behaviors(Int32).same
+  end
+end
+
+# Root actor owns spawning; system-level config can stay default.
+system = Movie::ActorSystem(Int32).new(main_behavior, Movie::RestartStrategy::RESTART)
 
 # Trigger failures to see supervision in action
-worker << 1
-child_a << 1
+system << 1   # one-for-one worker fails and restarts with backoff
+system << 2   # all-for-one: both children will be restarted on a sibling failure
