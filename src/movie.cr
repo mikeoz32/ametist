@@ -6,6 +6,7 @@ require "./movie/behavior"
 require "./movie/mailbox"
 require "./movie/context"
 require "./movie/system"
+require "./movie/future"
 
 module Movie
   # Movie is an actor framework for Crystal

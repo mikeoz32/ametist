@@ -1,0 +1,71 @@
+# Streams Protocol (Source/Flow/Sink MVP)
+
+## Goals
+- Backpressure-first: downstream explicitly requests demand; upstream never overruns demand.
+- Clear terminals: completion, error, cancel are terminal; no signals after terminal.
+- Simple single-subscription per stage for MVP; multi-subscription can be revisited later.
+
+## Message types
+Control/Data messages exchanged between adjacent stages (upstream -> downstream unless noted):
+- `Subscribe(subscriber)` (downstream -> upstream): ask to start; upstream replies with an initial `OnSubscribe` or rejects.
+- `OnSubscribe(subscription)` (upstream -> downstream): carries a handle to send `Request(n)` / `Cancel` upstream.
+- `Request(n : UInt64)` (downstream -> upstream): additive demand; `n > 0`. Zero is ignored.
+- `Cancel` (downstream -> upstream): terminal from downstream; upstream must stop sending and may clean up.
+- `OnNext(elem)` (upstream -> downstream): data element; allowed only when outstanding demand > 0.
+- `OnComplete` (upstream -> downstream): terminal successful completion.
+- `OnError(error)` (upstream -> downstream): terminal failure; error is opaque payload.
+
+## Invariants
+- Demand gate: `OnNext` only when outstanding demand > 0; each `OnNext` decrements demand by 1.
+- Additive demand: `Request(n)` adds to outstanding demand (clamp at UInt64::MAX to avoid overflow).
+- Non-positive requests: `Request(0)` is ignored; negative not allowed by type.
+- Single terminal: after any of `OnComplete` / `OnError` / `Cancel`, no further signals (including `OnNext`, `Request`, or another terminal) are processed or emitted.
+- Single subscription (MVP): each stage accepts at most one `Subscribe`; further attempts are rejected (e.g., ignored or `OnError` once) — precise rejection TBD in implementation.
+- Late signals: signals arriving after terminal are dropped.
+- Ordering: signals are delivered in send order per link.
+- Backpressure hop-by-hop: if downstream is slow, upstream must pause until it receives more `Request`.
+
+## Stage responsibilities
+- Source: owns production; sends `OnSubscribe` then waits for `Request`; emits up to demand; sends `OnComplete` when done; on error sends `OnError`; on `Cancel` stops promptly.
+- Flow: on `OnSubscribe`, returns a downstream subscription; forwards `Request` upstream respecting its own buffering (MVP: no extra buffering beyond demand). Transforms/filters elements; honours demand and terminals.
+- Sink: initiates `Subscribe`; manages demand policy (e.g., request batch-by-batch); handles `OnNext`/`OnComplete`/`OnError`; may `Cancel` proactively.
+
+## Error and cancellation
+- Upstream failure => `OnError` to downstream; downstream should stop and may propagate `Cancel` further upstream if needed (MVP: assume single upstream link so `OnError` is terminal).
+- Downstream `Cancel` => upstream stops emitting and drops further signals; upstream may propagate `Cancel` further upstream (for Flow) and complete internal cleanup.
+
+## Buffering (MVP)
+- Default: zero/strict buffering in Flow — only emit when demand present; may hold at most one in-flight transform step.
+- If implementation adds small buffer, it must still respect outstanding demand and not overrun requested total.
+
+## Rejection / violations (to decide in impl)
+- If `Request` arrives before `OnSubscribe`, either queue until subscribed or drop with warning.
+- If `Subscribe` arrives when already subscribed, respond with `OnError` or ignore; choose consistent behaviour across stages.
+
+## Next steps
+- API surface / builder DSL (see OZW-65) and Future/Promise materialization (see OZW-66).
+- Operator semantics per stage (see OZW-69/72/77/76).
+- E2E tests per scenarios (OZW-63/64/71/73/75).
+
+## Builder surface & materialization (OZW-65)
+- Single-subscription builders in MVP; each materialization spawns a fresh graph.
+- Sources (initial set): `Source.from_array(enum)`, `Source.single(elem)`, `Source.tick(interval, supplier)`, `Source.manual` (external push via an exposed ref).
+- Flows (initial set): `Flow.map`, `Flow.filter`, `Flow.take(n)`; more to follow in operator tasks.
+- Sinks (initial set): `Sink.foreach(&block)`, `Sink.fold(seed, &block)`, `Sink.first`.
+- Composition DSL: `source.via(flow).to(sink)` returns a materialized handle.
+- Materialized handle: `{completion: Future(T), cancel: -> Void}` where `T` is the sink’s materialized value (e.g., `Nil` for foreach, accumulator for fold). Cancel is idempotent and propagates `Cancel` upstream.
+- Completion semantics: completion future succeeds on `OnComplete`, fails on `OnError`, cancels on `Cancel`.
+- Re-materialization: calling `.to` again builds a new graph; prior refs are independent.
+
+## Future/Promise primitive (OZW-66)
+- States: `Pending`, `Completed(value)`, `Failed(error)`, `Cancelled` (terminal, mutually exclusive).
+- Future API sketch:
+	- `await(timeout? = nil) : T` (raises on failure/cancel; Timeout on expiry).
+	- `on_complete(&Result(T) ->)` register multiple callbacks; fire immediately if already terminal.
+	- Predicates: `completed?`, `failed?`, `cancelled?`, `pending?`; accessors `value?`, `error?`.
+- Promise API sketch:
+	- `success(value : T = nil)`, `failure(error : Exception)`, `cancel`, and `try_*` variants returning Bool for idempotence.
+	- `future : Future(T)` to hand out read-only view.
+- Concurrency: thread-safe for actor usage; single terminal transition wins; callbacks run exactly once per waiter even under races.
+- Cancellation hook: `cancel` should trigger upstream `Cancel` when wired to a stream materialization.
+- Zero allocations on steady path where possible; no busy-waiting (use condition/channel under the hood in impl).
