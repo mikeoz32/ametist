@@ -10,6 +10,16 @@ module Movie
   class FutureTimeout < Exception
   end
 
+  # Handle for cancelling callback subscriptions on Future
+  class FutureSubscription
+    def initialize(@cancel_proc : Proc(Nil))
+    end
+
+    def cancel
+      @cancel_proc.call
+    end
+  end
+
   enum FutureStatus
     Pending
     Success
@@ -48,8 +58,9 @@ module Movie
       @status = FutureStatus::Pending
       @value = nil.as(T?)
       @error = nil.as(Exception?)
-      @callbacks = [] of Proc(FutureResult(T), Nil)
+      @callbacks = [] of NamedTuple(id: Int32, kind: Symbol, cb: Proc(FutureResult(T), Nil))
       @waiters = [] of Channel(Nil)
+      @next_callback_id = 0
     end
 
     def status : FutureStatus
@@ -90,16 +101,20 @@ module Movie
       end
     end
 
-    def on_complete(&block : FutureResult(T) ->)
-      snapshot = nil
-      @mutex.synchronize do
-        if terminal?
-          snapshot = FutureResult(T).new(@status, @value, @error)
-        else
-          @callbacks << block
-        end
-      end
-      block.call(snapshot) if snapshot
+    def on_complete(&block : FutureResult(T) ->) : FutureSubscription
+      register_callback(:complete, block)
+    end
+
+    def on_success(&block : T ->) : FutureSubscription
+      register_callback(:success, ->(res : FutureResult(T)) { block.call(res.value.as(T)) })
+    end
+
+    def on_failure(&block : Exception ->) : FutureSubscription
+      register_callback(:failure, ->(res : FutureResult(T)) { block.call(res.error.not_nil!) })
+    end
+
+    def on_cancel(&block : ->) : FutureSubscription
+      register_callback(:cancel, ->(_res : FutureResult(T)) { block.call })
     end
 
     protected def try_complete_success(value : T) : Bool
@@ -164,8 +179,7 @@ module Movie
         @value = value
         @error = error
         snapshot = FutureResult(T).new(@status, @value, @error)
-        callbacks = @callbacks.dup
-        @callbacks.clear
+        callbacks = select_callbacks(@status)
         waiters = @waiters
         @waiters = [] of Channel(Nil)
         transitioned = true
@@ -178,6 +192,58 @@ module Movie
         end
       end
       transitioned
+    end
+
+    private def register_callback(kind : Symbol, block : Proc(FutureResult(T), Nil)) : FutureSubscription
+      snapshot = nil
+      id = 0
+      @mutex.synchronize do
+        if terminal?
+          snapshot = FutureResult(T).new(@status, @value, @error)
+        else
+          @next_callback_id += 1
+          id = @next_callback_id
+          @callbacks << {id: id, kind: kind, cb: block}
+        end
+      end
+
+      if snapshot
+        if callback_applicable?(kind, snapshot.status)
+          block.call(snapshot)
+        end
+        return FutureSubscription.new(->{} )
+      end
+
+      cancel_proc = -> do
+        @mutex.synchronize do
+          @callbacks.reject! { |entry| entry[:id] == id }
+        end
+      end
+      FutureSubscription.new(cancel_proc)
+    end
+
+    private def select_callbacks(status : FutureStatus)
+      callbacks = [] of Proc(FutureResult(T), Nil)
+      @callbacks.each do |entry|
+        callbacks << entry[:cb] if callback_applicable?(entry[:kind], status)
+      end
+      @callbacks.clear
+      callbacks
+    end
+
+    private def callback_applicable?(kind : Symbol, status : FutureStatus)
+      case kind
+      when :complete
+        true
+      when :success
+        status == FutureStatus::Success
+      when :failure
+        status == FutureStatus::Failure
+      when :cancel
+        status == FutureStatus::Cancelled
+      else
+        false
+      end
     end
   end
 

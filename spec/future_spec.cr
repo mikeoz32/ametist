@@ -35,14 +35,13 @@ describe Movie::Future do
     called.should eq 1
   end
 
-  it "propagates failure" do
+  it "propagates failure and on_failure" do
     promise = Movie::Promise(Int32).new
     future = promise.future
     error = RuntimeError.new("boom")
 
-    future.on_complete do |res|
-      res.failure?.should be_true
-      res.error.should eq error
+    future.on_failure do |err|
+      err.should eq error
     end
 
     promise.failure(error)
@@ -50,17 +49,19 @@ describe Movie::Future do
     expect_raises(RuntimeError) { future.await }
   end
 
-  it "propagates cancellation" do
+  it "propagates cancellation and on_cancel" do
     promise = Movie::Promise(Int32).new
     future = promise.future
+    called = 0
 
-    future.on_complete do |res|
-      res.cancelled?.should be_true
+    future.on_cancel do
+      called += 1
     end
 
     promise.cancel
 
     expect_raises(Movie::FutureCancelled) { future.await }
+    called.should eq 1
   end
 
   it "prevents double completion" do
@@ -73,5 +74,17 @@ describe Movie::Future do
     promise.try_cancel.should be_false
 
     future.await.should eq 1
+  end
+
+  it "allows cancelling subscriptions" do
+    promise = Movie::Promise(Int32).new
+    future = promise.future
+    called = 0
+
+    sub = future.on_success { |_v| called += 1 }
+    sub.cancel
+
+    promise.success(10)
+    called.should eq 0
   end
 end
