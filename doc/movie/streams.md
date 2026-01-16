@@ -66,6 +66,11 @@ Control/Data messages exchanged between adjacent stages (upstream -> downstream 
 	- `system : ActorSystem(MessageBase)` to keep the pipeline alive.
 	- Single-subscription only (mirrors MVP invariant).
 
+## Runnable example
+- File: [examples/streams_basic.cr](../../examples/streams_basic.cr)
+- Run: `crystal run examples/streams_basic.cr -Dpreview_mt -Dexecution_context`
+- Flow: Manual source produces 1..5, then flows map `*2`, filter evens, take 3, collect to a channel, print results, await completion.
+
 ## Future/Promise primitive (OZW-66)
 - States: `Pending`, `Completed(value)`, `Failed(error)`, `Cancelled` (terminal, mutually exclusive).
 - Future API sketch:
