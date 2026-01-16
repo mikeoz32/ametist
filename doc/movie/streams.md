@@ -71,6 +71,12 @@ Control/Data messages exchanged between adjacent stages (upstream -> downstream 
 - Run: `crystal run examples/streams_basic.cr -Dpreview_mt -Dexecution_context`
 - Flow: Manual source produces 1..5, then flows map `*2`, filter evens, take 3, collect to a channel, print results, await completion.
 
+## HTTP streaming example
+- File: [examples/streams_http.cr](../../examples/streams_http.cr)
+- Run: `crystal run examples/streams_http.cr -Dpreview_mt -Dexecution_context`
+- Usage: `curl -N http://localhost:9292/stream?n=5`
+- Flow: per request builds pipeline (manual source -> map `*2` -> take(n) -> collect) and streams NDJSON over chunked HTTP.
+
 ## Future/Promise primitive (OZW-66)
 - States: `Pending`, `Completed(value)`, `Failed(error)`, `Cancelled` (terminal, mutually exclusive).
 - Future API sketch:
