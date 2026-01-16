@@ -50,12 +50,21 @@ Control/Data messages exchanged between adjacent stages (upstream -> downstream 
 ## Builder surface & materialization (OZW-65)
 - Single-subscription builders in MVP; each materialization spawns a fresh graph.
 - Sources (initial set): `Source.from_array(enum)`, `Source.single(elem)`, `Source.tick(interval, supplier)`, `Source.manual` (external push via an exposed ref).
-- Flows (initial set): `Flow.map`, `Flow.filter`, `Flow.take(n)`; more to follow in operator tasks.
+- Flows (initial set): `Flow.map`, `Flow.filter`, `Flow.take(n)`, `Flow.drop(n)`; more to follow in operator tasks. MVP implementations exist as actors: `MapFlow`, `FilterFlow`, `TakeFlow`, `DropFlow`.
 - Sinks (initial set): `Sink.foreach(&block)`, `Sink.fold(seed, &block)`, `Sink.first`.
 - Composition DSL: `source.via(flow).to(sink)` returns a materialized handle.
 - Materialized handle: `{completion: Future(T), cancel: -> Void}` where `T` is the sink’s materialized value (e.g., `Nil` for foreach, accumulator for fold). Cancel is idempotent and propagates `Cancel` upstream.
 - Completion semantics: completion future succeeds on `OnComplete`, fails on `OnError`, cancels on `Cancel`.
 - Re-materialization: calling `.to` again builds a new graph; prior refs are independent.
+
+## Current builder helper (MVP)
+- `Movie::Streams.build_pipeline(source, flows, sink, initial_demand = 0)` wires `source -> flows -> sink`, auto-sends `Subscribe` for each hop, and optionally primes the sink with initial demand.
+- Returns `MaterializedPipeline` with:
+	- `source`/`sink` refs for pushing `Produce`/`Request`/terminals.
+	- `completion : Future(Nil)` completed by upstream `OnComplete`, failed by `OnError`, cancelled by downstream `Cancel`.
+	- `cancel : ->` that sends `Cancel` to the sink (propagates upstream via flows).
+	- `system : ActorSystem(MessageBase)` to keep the pipeline alive.
+	- Single-subscription only (mirrors MVP invariant).
 
 ## Future/Promise primitive (OZW-66)
 - States: `Pending`, `Completed(value)`, `Failed(error)`, `Cancelled` (terminal, mutually exclusive).
