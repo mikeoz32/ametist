@@ -4,13 +4,21 @@ require "../src/movie"
 
 alias Streams = Movie::Streams
 
+# Reuse a single actor system for all stream materializations.
+STREAM_SYSTEM = Movie::ActorSystem(Streams::MessageBase).new(
+  Movie::Behaviors(Streams::MessageBase).setup do
+    Movie::Behaviors(Streams::MessageBase).same
+  end
+)
+
 # Streams an NDJSON sequence of transformed numbers over HTTP.
 # Route: /stream?n=10  (defaults to 5)
 # Flow: manual source -> map(*2) -> take(n) -> collect to channel -> flush to HTTP response
 
 def stream_numbers(n : Int32, io : IO)
   count = n < 0 ? 0 : n
-  pipeline = Streams.build_collecting_pipeline(
+  pipeline = Streams.build_collecting_pipeline_in(
+    STREAM_SYSTEM,
     Streams::ManualSource.new,
     [
       Streams::MapFlow.new { |v| v.as(Int32) * 2 },

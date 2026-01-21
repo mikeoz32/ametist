@@ -27,7 +27,7 @@ module Movie
     end
 
     def enqueue(value : T)
-      node = QueueNode.new(value)
+      node = QueueNode(T).new(value.as(T))
       @mutex.synchronize do
         if @first.nil?
           @first = node

@@ -59,6 +59,7 @@ struct AmetistConfig
   def database(name : String) : Ametist::Database
     Ametist::Database.new
   end
+
 end
 
 def main
@@ -66,7 +67,6 @@ def main
   auto = LF::DI::AutowiredApplicationConfig.new
   ctx.register(AmetistConfig.new)
   ctx.register(auto)
-  database = ctx.get_bean("database", Ametist::Database)
   api = LF::LFApi.new do |router|
     CollectionsResource.new.setup_routes(router)
   end

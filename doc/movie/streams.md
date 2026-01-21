@@ -58,7 +58,9 @@ Control/Data messages exchanged between adjacent stages (upstream -> downstream 
 - Re-materialization: calling `.to` again builds a new graph; prior refs are independent.
 
 ## Current builder helper (MVP)
-- `Movie::Streams.build_pipeline(source, flows, sink, initial_demand = 0)` wires `source -> flows -> sink`, auto-sends `Subscribe` for each hop, and optionally primes the sink with initial demand.
+- `Movie::Streams.build_pipeline(source, flows, sink, initial_demand = 0)` wires `source -> flows -> sink`, auto-sends `Subscribe` for each hop, and optionally primes the sink with initial demand (creates its own actor system).
+- `Movie::Streams.build_pipeline_in(system, source, flows, sink, initial_demand = 0)` does the same but reuses an existing `ActorSystem` (recommended for servers/long-lived apps).
+- Collect/fold variants: `build_collecting_pipeline[_in]` (returns `out_channel`) and `build_fold_pipeline[_in]` (returns `Future(acc)`).
 - Returns `MaterializedPipeline` with:
 	- `source`/`sink` refs for pushing `Produce`/`Request`/terminals.
 	- `completion : Future(Nil)` completed by upstream `OnComplete`, failed by `OnError`, cancelled by downstream `Cancel`.

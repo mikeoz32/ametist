@@ -1067,6 +1067,7 @@ module Movie
         end
 
         # Build and materialize a simple source -> flows -> sink pipeline with auto-subscriptions.
+        # Creates a fresh actor system (use *_in to reuse an existing one).
         def self.build_pipeline(source : AbstractBehavior(MessageBase), flows : Array(AbstractBehavior(MessageBase)), sink : AbstractBehavior(MessageBase), initial_demand : UInt64 = 0u64)
           promise = Promise(Nil).new
           ref_ch = Channel(Tuple(ActorRef(MessageBase), ActorRef(MessageBase))).new(1)
@@ -1101,10 +1102,42 @@ module Movie
           MaterializedPipeline(Nil).new(system, source_ref, sink_ref, promise.future, cancel_proc)
         end
 
+        # Build pipeline inside an existing actor system (preferred for real-world servers).
+        def self.build_pipeline_in(system : ActorSystem(MessageBase), source : AbstractBehavior(MessageBase), flows : Array(AbstractBehavior(MessageBase)), sink : AbstractBehavior(MessageBase), initial_demand : UInt64 = 0u64)
+          promise = Promise(Nil).new
+
+          src = system.spawn(source)
+          flow_refs = flows.map { |flow| system.spawn(flow) }
+          completion = system.spawn(CompletionFlow.new(promise))
+          sink_actor = system.spawn(sink)
+
+          chain = flow_refs + [completion]
+          downstream = sink_actor
+          chain.reverse_each do |up_actor|
+            up_actor << Subscribe.new(downstream)
+            downstream = up_actor
+          end
+
+          src << Subscribe.new(downstream)
+
+          if initial_demand > 0
+            sink_actor << Request.new(initial_demand)
+          end
+
+          cancel_proc = ->{ sink_actor << Cancel.new }
+          MaterializedPipeline(Nil).new(system, src, sink_actor, promise.future, cancel_proc)
+        end
+
         # Build pipeline that collects into a channel for external consumers.
         def self.build_collecting_pipeline(source : AbstractBehavior(MessageBase), flows : Array(AbstractBehavior(MessageBase)) = [] of AbstractBehavior(MessageBase), initial_demand : UInt64 = 0u64, channel_capacity : Int32 = 0)
           out_ch = Channel(Element).new(channel_capacity)
           pipeline = build_pipeline(source, flows, CollectSink.new(out_ch), initial_demand)
+          MaterializedPipeline(Nil).new(pipeline.system, pipeline.source, pipeline.sink, pipeline.completion, pipeline.cancel, out_ch)
+        end
+
+        def self.build_collecting_pipeline_in(system : ActorSystem(MessageBase), source : AbstractBehavior(MessageBase), flows : Array(AbstractBehavior(MessageBase)) = [] of AbstractBehavior(MessageBase), initial_demand : UInt64 = 0u64, channel_capacity : Int32 = 0)
+          out_ch = Channel(Element).new(channel_capacity)
+          pipeline = build_pipeline_in(system, source, flows, CollectSink.new(out_ch), initial_demand)
           MaterializedPipeline(Nil).new(pipeline.system, pipeline.source, pipeline.sink, pipeline.completion, pipeline.cancel, out_ch)
         end
 
@@ -1137,6 +1170,28 @@ module Movie
           source_ref, sink_ref = ref_ch.receive
           cancel_proc = ->{ sink_ref << Cancel.new }
           MaterializedPipeline(T).new(system, source_ref, sink_ref, promise.future, cancel_proc)
+        end
+
+        def self.build_fold_pipeline_in(system : ActorSystem(MessageBase), source : AbstractBehavior(MessageBase), flows : Array(AbstractBehavior(MessageBase)), initial : T, reducer : T, Element -> T, initial_demand : UInt64 = 0u64) forall T
+          promise = Promise(T).new
+          fold_sink = FoldSink(T).new(initial, reducer, promise)
+
+          src = system.spawn(source)
+          flow_refs = flows.map { |flow| system.spawn(flow) }
+          sink_actor = system.spawn(fold_sink)
+
+          downstream = sink_actor
+          flow_refs.reverse_each do |up_actor|
+            up_actor << Subscribe.new(downstream)
+            downstream = up_actor
+          end
+
+          src << Subscribe.new(downstream)
+
+          sink_actor << Request.new(initial_demand > 0 ? initial_demand : UInt64::MAX)
+
+          cancel_proc = ->{ sink_actor << Cancel.new }
+          MaterializedPipeline(T).new(system, src, sink_actor, promise.future, cancel_proc)
         end
 
         # Fold sink reduces elements with an accumulator and completes a promise.

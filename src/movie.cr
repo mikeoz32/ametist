@@ -7,6 +7,8 @@ require "./movie/mailbox"
 require "./movie/context"
 require "./movie/system"
 require "./movie/future"
+require "./movie/ask"
+require "./movie/streams"
 
 module Movie
   # Movie is an actor framework for Crystal
@@ -77,9 +79,13 @@ module Movie
     end
 
     def <<(message : T)
+      tell_from(nil, message)
+    end
+
+    def tell_from(sender : ActorRefBase?, message : T)
       context = @system.context @id
       raise "Context not found" if context.nil?
-      context.as(ActorContext(T)) << message
+      context.as(ActorContext(T)).deliver(message, sender)
     end
 
     def send_system(message : SystemMessage)

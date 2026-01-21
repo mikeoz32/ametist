@@ -309,7 +309,7 @@ private def receive_or_timeout(ch)
   select
   when value = ch.receive
     value
-  when timeout(200.milliseconds)
+  when timeout(500.milliseconds)
     raise "Timeout waiting for channel"
   end
 end

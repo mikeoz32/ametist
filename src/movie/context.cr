@@ -32,6 +32,7 @@ module Movie
     @pre_stop_completed : Bool = false
     @post_stop_sent : Bool = false
     @restart_counters : Hash(Int32 | Symbol, NamedTuple(count: Int32, started_at: Time::Span)) = {} of Int32 | Symbol => NamedTuple(count: Int32, started_at: Time::Span)
+    @current_sender : ActorRefBase? = nil
 
     def initialize(behavior : AbstractBehavior(T), ref : ActorRef(T), @system : AbstractActorSystem, restart_strategy : RestartStrategy, supervision_config : SupervisionConfig = SupervisionConfig.default)
       @ref = ref.as(ActorRefBase)
@@ -48,6 +49,10 @@ module Movie
 
     def ref : ActorRef(T)
       @ref.as(ActorRef(T))
+    end
+
+    def sender : ActorRefBase?
+      @current_sender
     end
 
     def start(internal = false)
@@ -93,6 +98,33 @@ module Movie
       actor.send_system(Watch.new(@ref).as(SystemMessage))
     end
 
+    def ask(target : ActorRef(M), message : M, response_type : T.class = Nil, timeout : Time::Span? = nil) : Future(T) forall M, T
+      promise = Promise(T).new
+
+      listener_behavior = Behaviors(Movie::Ask::Response(T)).setup do |listener_context|
+        listener_context.watch(target)
+        Movie::Ask::ListenerBehavior(T).new(promise, target.as(ActorRefBase))
+      end
+
+      listener = spawn(listener_behavior, RestartStrategy::STOP, SupervisionConfig.default)
+      listener_ref = listener.as(ActorRef(Movie::Ask::Response(T)))
+
+      target.tell_from(listener_ref.as(ActorRefBase), message)
+
+      if timeout
+        span = timeout
+        ::spawn do
+          sleep span.not_nil!
+          if promise.future.pending?
+            promise.try_failure(FutureTimeout.new)
+            listener.send_system(STOP)
+          end
+        end
+      end
+
+      promise.future
+    end
+
     protected def register_watcher(actor : ActorRefBase)
       @watchers << actor unless @watchers.includes?(actor)
     end
@@ -102,20 +134,23 @@ module Movie
     end
 
     def tell(message : T)
-      raise "Mailbox not initialized" unless @mailbox
-      mbox = @mailbox.as(Mailbox(T))
-      ref = @ref.as(ActorRefBase)
-      mbox << Envelope.new(message, ref)
+      deliver(message, @ref.as(ActorRefBase))
     end
 
     def << (message : T)
       tell message
     end
 
+    def deliver(message : T, sender : ActorRefBase?)
+      raise "Mailbox not initialized" unless @mailbox
+      mbox = @mailbox.as(Mailbox(T))
+      mbox << Envelope(T).new(message.as(T), sender || @ref)
+    end
+
     def send_system_message(message : SystemMessage)
       raise "Mailbox not initialized" unless @mailbox
       mbox = @mailbox.as(Mailbox(T))
-      mbox.send_system(Envelope.new(message, @ref))
+      mbox.send_system(Envelope(SystemMessage).new(message, @ref))
     end
 
     def on_message(message : Envelope(T))
@@ -125,6 +160,8 @@ module Movie
       end
       log.debug { "Actor #{@ref} received message #{message.message}" }
       log.debug { "Current state: #{@state}" }
+      previous_sender = @current_sender
+      @current_sender = message.sender
       new_behavior = @active_behavior.receive(message.message, self)
       if new_behavior.is_a?(AbstractBehavior(T))
         @active_behavior = resolve_behavior(new_behavior)
@@ -135,6 +172,8 @@ module Movie
       notify_for_failure(ex)
       transition_to(State::FAILED)
       apply_restart_strategy(ex)
+    ensure
+      @current_sender = previous_sender
     end
 
     def on_system_message(message : Envelope(SystemMessage))

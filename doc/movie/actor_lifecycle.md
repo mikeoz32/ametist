@@ -272,6 +272,40 @@ Sender                   ActorRef              Context              Mailbox     
   │                         │                     │                    │                 │
   │                         │                     │                    │──check queue───>│
   │                         │                     │                    │                 │
+### Envelope senders & ask/ack pattern
+
+- Every user message travels inside an `Envelope` that now carries an optional `sender : ActorRefBase?`. While a behavior handles a message it can retrieve the sender via `context.sender`.
+- Reply helpers: `Movie::Ask.success(context.sender, value)` and `Movie::Ask.failure(context.sender, error, ResponseType)` ship values/errors back to the temporary listener tied to the original `ask` call.
+- `ActorContext#ask(target, message, response_type : T.class = Nil, timeout : Time::Span? = nil)` materializes a temporary listener actor, sends `message` with that listener as the envelope sender, and returns a `Future(T)` that completes when the target replies. Default `response_type` is `Nil`, so simple ACKs look like:
+
+```crystal
+future = context.ask(order_actor, :reserve_stock)
+future.await(200.milliseconds) # raises on FutureTimeout/Failure/Cancel
+```
+
+- To receive typed data, pass the expected response type:
+
+```crystal
+future = context.ask(payment_actor, :charge, Float64)
+amount = future.await(500.milliseconds)
+```
+
+- A target actor only needs access to `context.sender` to acknowledge:
+
+```crystal
+class PaymentActor < Movie::AbstractBehavior(Symbol)
+  def receive(message, context)
+    case message
+    when :charge
+      charge = process_payment
+      Movie::Ask.success(context.sender, charge)
+    end
+    Movie::Behaviors(Symbol).same
+  end
+end
+```
+
+- If the target terminates before replying, the future fails with `Movie::Ask::TargetTerminated`. Optional timeouts passed to `ask` force `FutureTimeout` and stop the temporary listener.
 ```
 
 #### 3. Graceful Stop

@@ -1,14 +1,9 @@
 module Movie
   class Envelope(T)
-    def initialize(@message : T, @sender : ActorRefBase)
-    end
+    getter message : T
+    getter sender : ActorRefBase?
 
-    def message
-      @message
-    end
-
-    def sender
-      @sender
+    def initialize(@message : T, @sender : ActorRefBase?)
     end
   end
 
@@ -40,17 +35,17 @@ module Movie
       end
     end
 
-    def send(message)
+    def send(message : Envelope(T))
       @inbox.enqueue(message)
       schedule_dispatch
     end
 
-    def send_system(message)
+    def send_system(message : Envelope(SystemMessage))
       @system.enqueue(message)
       schedule_dispatch
     end
 
-    def <<(message)
+    def <<(message : Envelope(T))
       send(message)
     end
 
