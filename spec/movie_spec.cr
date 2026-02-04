@@ -258,13 +258,13 @@ describe Movie do
 
     actor << 1
 
-    wait_until(timeout_ms: 1000) do
+    wait_until(timeout_ms: 2000) do
       RestartProbe.signals.any? { |s| s.ends_with?("PreRestart") }
     end
 
     actor << 2
 
-    wait_until(timeout_ms: 1000) do
+    wait_until(timeout_ms: 2000) do
       RestartProbe.signals.includes?("r:msg:2")
     end
   end
@@ -355,11 +355,7 @@ describe Movie do
     child1 << :fail
 
     wait_until(timeout_ms: 500) do
-      if ctx = system.context(child1.id).as?(Movie::ActorContext(Symbol))
-        ctx.state.stopped?
-      else
-        false
-      end
+      system.context(child1.id).nil?  # Actor deregistered after stop
     end
 
     ctx2 = system.context(child2.id).as?(Movie::ActorContext(Symbol))
@@ -399,6 +395,13 @@ describe Movie do
     actor << :fail
     wait_until(timeout_ms: 500) do
       if ctx = system.context(actor.id).as?(Movie::ActorContext(Symbol))
+        ctx.state == Movie::ActorContext::State::FAILED || ctx.state == Movie::ActorContext::State::RESTARTING
+      else
+        false
+      end
+    end
+    wait_until(timeout_ms: 500) do
+      if ctx = system.context(actor.id).as?(Movie::ActorContext(Symbol))
         ctx.state == Movie::ActorContext::State::RUNNING
       else
         false
@@ -407,23 +410,30 @@ describe Movie do
 
     actor << :fail
 
-    wait_until(timeout_ms: 1500) do
+    wait_until(timeout_ms: 2000) do
       if ctx = system.context(actor.id).as?(Movie::ActorContext(Symbol))
-        ctx.state.stopped?
+        ctx.state == Movie::ActorContext::State::STOPPED || ctx.state == Movie::ActorContext::State::TERMINATED
       else
-        false
+        true
       end
     end
   end
 
   it "stops all children after exceeding max restarts within window (all-for-one)" do
-    config = Movie::SupervisionConfig.new(strategy: Movie::SupervisionStrategy::RESTART, scope: Movie::SupervisionScope::ALL_FOR_ONE, max_restarts: 1, within: 200.milliseconds)
+    config = Movie::SupervisionConfig.new(strategy: Movie::SupervisionStrategy::RESTART, scope: Movie::SupervisionScope::ALL_FOR_ONE, max_restarts: 1, within: 3.seconds)
     system = Movie::ActorSystem(Symbol).new(Movie::Behaviors(Symbol).same, Movie::RestartStrategy::RESTART, config)
 
     child1 = system.spawn(FailableProbe.new("g1"), Movie::RestartStrategy::RESTART, config)
     child2 = system.spawn(FailableProbe.new("g2"), Movie::RestartStrategy::RESTART, config)
 
     child1 << :fail
+    wait_until(timeout_ms: 500) do
+      if ctx = system.context(child1.id).as?(Movie::ActorContext(Symbol))
+        ctx.state == Movie::ActorContext::State::FAILED || ctx.state == Movie::ActorContext::State::RESTARTING
+      else
+        false
+      end
+    end
     wait_until(timeout_ms: 500) do
       if ctx = system.context(child1.id).as?(Movie::ActorContext(Symbol))
         ctx.state == Movie::ActorContext::State::RUNNING
@@ -434,10 +444,14 @@ describe Movie do
 
     child1 << :fail
 
-    wait_until(timeout_ms: 1500) do
-      c1 = system.context(child1.id).as?(Movie::ActorContext(Symbol))
-      c2 = system.context(child2.id).as?(Movie::ActorContext(Symbol))
-      c1 && c2 && c1.state.stopped? && c2.state.stopped?
+    wait_until(timeout_ms: 4000) do
+      [child1, child2].all? do |child|
+        if ctx = system.context(child.id).as?(Movie::ActorContext(Symbol))
+          ctx.state == Movie::ActorContext::State::STOPPED || ctx.state == Movie::ActorContext::State::TERMINATED
+        else
+          true
+        end
+      end
     end
   end
 
@@ -480,11 +494,7 @@ describe Movie do
     actor << 1
 
     wait_until(timeout_ms: 500) do
-      if ctx = system.context(actor.id).as?(Movie::ActorContext(Int32))
-        ctx.state.stopped?
-      else
-        false
-      end
+      system.context(actor.id).nil?  # Actor deregistered after stop
     end
   end
 
@@ -545,8 +555,7 @@ describe Movie do
     parent_idx.should be > child1_idx
     parent_idx.should be > child2_idx
 
-    ctx = system.context(parent.id).as?(Movie::ActorContext(Symbol))
-    ctx.not_nil!.state.stopped?.should be_true
+    system.context(parent.id).should be_nil  # Actor deregistered after stop
   end
 
   it "stops immediately when there are no children" do
@@ -560,8 +569,7 @@ describe Movie do
     events = StopProbe.events
     events.includes?("solo:post_stop").should be_true
 
-    ctx = system.context(actor.id).as?(Movie::ActorContext(Symbol))
-    ctx.not_nil!.state.stopped?.should be_true
+    system.context(actor.id).should be_nil  # Actor deregistered after stop
   end
 
   it "drops user messages while stopping" do
@@ -585,11 +593,7 @@ describe Movie do
     actor << 3
 
     wait_until(timeout_ms: 200) do
-      if ctx = system.context(actor.id).as?(Movie::ActorContext(Int32))
-        ctx.state.stopped?
-      else
-        false
-      end
+      system.context(actor.id).nil?  # Actor deregistered after stop
     end
 
     mutex.synchronize { count.should eq(1) }

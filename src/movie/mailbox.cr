@@ -18,7 +18,7 @@ module Movie
     end
 
     def dispatch
-      @processing = true
+      @mutex.synchronize { @processing = true }
       @system.dequeue do |message|
         @context.on_system_message(message) unless message.nil?
       end
@@ -26,13 +26,14 @@ module Movie
         @context.on_message(message) unless message.nil?
       end
 
-      @processing = false
-      @scheduled = false
-
-      if @inbox.size > 0 || @system.size > 0
-        schedule_dispatch
-        puts "Resheculing"
+      need_schedule = false
+      @mutex.synchronize do
+        @processing = false
+        @scheduled = false
+        need_schedule = @inbox.size > 0 || @system.size > 0
+        @scheduled = true if need_schedule
       end
+      @dispatcher.dispatch(self) if need_schedule
     end
 
     def send(message : Envelope(T))
@@ -54,9 +55,13 @@ module Movie
     end
 
     private def schedule_dispatch
-      return if @scheduled || @processing
-      @dispatcher.dispatch(self)
-      @scheduled = true
+      should_schedule = false
+      @mutex.synchronize do
+        return if @scheduled || @processing
+        @scheduled = true
+        should_schedule = true
+      end
+      @dispatcher.dispatch(self) if should_schedule
     end
   end
 

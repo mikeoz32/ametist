@@ -1,10 +1,13 @@
 module Movie
   abstract class AbstractActorContext
+    abstract def ref : ActorRefBase
   end
 
   class ActorContext(T) < AbstractActorContext
     getter log : Log
     getter supervision_config : SupervisionConfig
+    getter path : ActorPath?
+    getter system : AbstractActorSystem
 
     enum State
       CREATED
@@ -23,6 +26,7 @@ module Movie
     @ref : ActorRefBase
     @restart_strategy : RestartStrategy
     @supervision_config : SupervisionConfig
+    @path : ActorPath?
 
     @children : Array(ActorRefBase) = [] of ActorRefBase
     @watching : Array(ActorRefBase) = [] of ActorRefBase
@@ -34,7 +38,14 @@ module Movie
     @restart_counters : Hash(Int32 | Symbol, NamedTuple(count: Int32, started_at: Time::Span)) = {} of Int32 | Symbol => NamedTuple(count: Int32, started_at: Time::Span)
     @current_sender : ActorRefBase? = nil
 
-    def initialize(behavior : AbstractBehavior(T), ref : ActorRef(T), @system : AbstractActorSystem, restart_strategy : RestartStrategy, supervision_config : SupervisionConfig = SupervisionConfig.default)
+    def initialize(
+      behavior : AbstractBehavior(T),
+      ref : ActorRef(T),
+      @system : AbstractActorSystem,
+      restart_strategy : RestartStrategy,
+      supervision_config : SupervisionConfig = SupervisionConfig.default,
+      @path : ActorPath? = nil
+    )
       @ref = ref.as(ActorRefBase)
       @behavior = behavior
       @active_behavior = behavior
@@ -53,6 +64,31 @@ module Movie
 
     def sender : ActorRefBase?
       @current_sender
+    end
+
+    # Pipe a future result to a target actor as Pipe::Success or Pipe::Failure.
+    def pipe(future : Future(U), reply_to : ActorRef(Pipe::Message(U))) : Nil forall U
+      future.on_success { |value| reply_to << Pipe::Success(U).new(value) }
+      future.on_failure { |error| reply_to << Pipe::Failure(U).new(error) }
+      future.on_cancel { reply_to << Pipe::Failure(U).new(FutureCancelled.new) }
+    end
+
+    # Pipe a future result to a target actor using custom success/failure mappers.
+    def pipe(
+      future : Future(U),
+      reply_to : ActorRef(V),
+      success : U -> V,
+      failure : Exception -> V
+    ) : Nil forall U, V
+      future.on_success { |value| reply_to << success.call(value) }
+      future.on_failure { |error| reply_to << failure.call(error) }
+      future.on_cancel { reply_to << failure.call(FutureCancelled.new) }
+    end
+
+    # Retrieve a system extension via its ExtensionId (Akka-style).
+    # Example: ctx.extension(Movie::Remote::Remoting)
+    def extension(id : ExtensionId(U)) : U forall U
+      id.get(@system)
     end
 
     def start(internal = false)
@@ -74,13 +110,40 @@ module Movie
     end
 
 
-    def spawn(behavior : AbstractBehavior(U), restart_strategy : RestartStrategy = @restart_strategy, supervision_config : SupervisionConfig = @supervision_config) : ActorRef(U) forall U
+    # Spawns a child actor under this actor's supervision.
+    # If name is provided, the child gets a hierarchical path: {parent_path}/{name}
+    # If name is nil, generates a unique name based on actor ID.
+    def spawn(
+      behavior : AbstractBehavior(U),
+      restart_strategy : RestartStrategy = @restart_strategy,
+      supervision_config : SupervisionConfig = @supervision_config,
+      name : String? = nil
+    ) : ActorRef(U) forall U
       raise "System not initialized" unless @system
-      child = @system.spawn(behavior, restart_strategy, supervision_config)
 
-      attach_child(child)
+      # Build child path from parent path
+      child_path = if parent_path = @path
+        child_name = name || "$#{@system.next_id}"
+        parent_path / child_name
+      else
+        nil
+      end
 
-      child.as(ActorRef(U))
+      # Create the child ref and context
+      ref = ActorRef(U).new(@system, child_path)
+      context = ActorContext(U).new(behavior, ref, @system, restart_strategy, supervision_config, child_path)
+
+      # Register in system registry
+      @system.register_context(ref.id, context)
+
+      # Register path
+      if p = child_path
+        @system.path_registry.register(ref, p)
+      end
+
+      context.start
+      attach_child(ref)
+      ref
     end
 
     def attach_child(child : ActorRef(U)) forall U
@@ -99,11 +162,11 @@ module Movie
     end
 
     def ask(target : ActorRef(M), message : M, response_type : T.class = Nil, timeout : Time::Span? = nil) : Future(T) forall M, T
-      promise = Promise(T).new
+      state = Movie::Ask::AskState(T).new(Promise(T).new)
 
       listener_behavior = Behaviors(Movie::Ask::Response(T)).setup do |listener_context|
         listener_context.watch(target)
-        Movie::Ask::ListenerBehavior(T).new(promise, target.as(ActorRefBase))
+        Movie::Ask::ListenerBehavior(T).new(state, target.as(ActorRefBase))
       end
 
       listener = spawn(listener_behavior, RestartStrategy::STOP, SupervisionConfig.default)
@@ -112,17 +175,16 @@ module Movie
       target.tell_from(listener_ref.as(ActorRefBase), message)
 
       if timeout
-        span = timeout
-        ::spawn do
-          sleep span.not_nil!
-          if promise.future.pending?
-            promise.try_failure(FutureTimeout.new)
+        timer_handle = @system.scheduler.schedule_once(timeout) do
+          if state.promise.future.pending?
+            state.promise.try_failure(FutureTimeout.new)
             listener.send_system(STOP)
           end
         end
+        state.timer_handle = timer_handle
       end
 
-      promise.future
+      state.promise.future
     end
 
     protected def register_watcher(actor : ActorRefBase)
@@ -144,7 +206,7 @@ module Movie
     def deliver(message : T, sender : ActorRefBase?)
       raise "Mailbox not initialized" unless @mailbox
       mbox = @mailbox.as(Mailbox(T))
-      mbox << Envelope(T).new(message.as(T), sender || @ref)
+      mbox << Envelope(T).new(message.as(T), sender || @system.dead_letters)
     end
 
     def send_system_message(message : SystemMessage)
@@ -214,7 +276,7 @@ module Movie
     protected def handle_failed(message : Failed)
       failed_actor = message.actor
       cause = message.cause
-      return unless @children.includes?(failed_actor)
+      return unless @children.any? { |child| child.id == failed_actor.id }
       attempt, exceeded = track_restart(failed_actor, cause)
       return if exceeded
       case @supervision_config.scope
@@ -390,8 +452,9 @@ module Movie
 
     protected def handle_terminated(message : Terminated)
       actor = message.actor
-      @watching.delete(actor)
-      @children.delete(actor)
+      @watching.reject! { |ref| ref.id == actor.id }
+      was_child = @children.any? { |ref| ref.id == actor.id }
+      @children.reject! { |ref| ref.id == actor.id }
 
       if @pending_terminations > 0 && @pending_children.includes?(actor)
         @pending_children.delete(actor)
@@ -400,6 +463,11 @@ module Movie
       end
 
       @active_behavior.on_signal(message)
+
+      # Deregister terminated children to prevent memory leaks
+      if was_child
+        @system.deregister(actor.id)
+      end
 
       finalize_stop_if_ready
     end

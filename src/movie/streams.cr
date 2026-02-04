@@ -928,7 +928,7 @@ module Movie
           end
 
           private def notify(sym : Symbol)
-            @signals.try { |ch| spawn { ch.send(sym) } }
+            @signals.try &.send(sym)
           end
 
           private def terminal?

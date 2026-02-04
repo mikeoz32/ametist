@@ -6,6 +6,14 @@ end
 
 module Ametist
 
+  struct Caster(T)
+    def self.cast(bytes : Slice(UInt8) | Nil)
+      return nil if bytes.nil?
+      ptr = bytes.to_unsafe.as(T*)
+      ptr.value
+    end
+  end
+
   def self.cosine_similarity(vector1 : Slice(Float32), vector2 : Slice(Float32))
     # Cosine similarity between two vectors
     # calculated as dot product of normalized vectors
@@ -136,6 +144,7 @@ module Ametist
   end
 
   class DenseDataBuffer(T) < DataBuffer(T)
+    getter dimension : Int32
 
     def initialize(capacity : Int32, @dimension : Int32 = 1)
       super(capacity * @dimension)

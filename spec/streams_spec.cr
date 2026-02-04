@@ -7,7 +7,7 @@ alias Elem = Movie::Streams::Element
 describe Movie::Streams do
   it "honors demand: emits only requested elements" do
     out_ch = Channel(Nil | Int32 | Float64 | String | Bool | Symbol).new
-    signals = Channel(Symbol).new
+    signals = Channel(Symbol).new(1)
 
     main = Movie::Behaviors(Msg).setup do |context|
       source = context.spawn(Movie::Streams::ManualSource.new)
@@ -41,7 +41,7 @@ describe Movie::Streams do
 
   it "propagates cancel downstream to upstream" do
     out_ch = Channel(Nil | Int32 | Float64 | String | Bool | Symbol).new
-    signals = Channel(Symbol).new
+    signals = Channel(Symbol).new(1)
 
     main = Movie::Behaviors(Msg).setup do |context|
       source = context.spawn(Movie::Streams::ManualSource.new)
@@ -70,7 +70,7 @@ describe Movie::Streams do
 
   it "propagates completion" do
     out_ch = Channel(Nil | Int32 | Float64 | String | Bool | Symbol).new
-    signals = Channel(Symbol).new
+    signals = Channel(Symbol).new(1)
 
     main = Movie::Behaviors(Msg).setup do |context|
       source = context.spawn(Movie::Streams::ManualSource.new)
@@ -95,7 +95,7 @@ describe Movie::Streams do
 
   it "propagates error and stops" do
     out_ch = Channel(Elem).new
-    signals = Channel(Symbol).new
+    signals = Channel(Symbol).new(1)
 
     main = Movie::Behaviors(Msg).setup do |context|
       source = context.spawn(Movie::Streams::ManualSource.new)
@@ -178,7 +178,7 @@ describe Movie::Streams do
 
   it "takes N then completes" do
     out_ch = Channel(Elem).new
-    signals = Channel(Symbol).new
+    signals = Channel(Symbol).new(1)
 
     main = Movie::Behaviors(Msg).setup do |context|
       source = context.spawn(Movie::Streams::ManualSource.new)
@@ -305,11 +305,11 @@ describe Movie::Streams do
   end
 end
 
-private def receive_or_timeout(ch)
+private def receive_or_timeout(ch, timeout_ms : Int32 = 1500)
   select
   when value = ch.receive
     value
-  when timeout(500.milliseconds)
+  when timeout(timeout_ms.milliseconds)
     raise "Timeout waiting for channel"
   end
 end

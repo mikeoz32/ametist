@@ -539,10 +539,11 @@ module OpenAI
     end
 
     private def base_headers
-      {
-        "Authorization" => "Bearer #{@api_key}",
-        "Accept" => "application/json"
-      }
+      headers = {"Accept" => "application/json"} of String => String
+      unless @api_key.empty?
+        headers["Authorization"] = "Bearer #{@api_key}"
+      end
+      headers
     end
 
     private def beta_assistants_header

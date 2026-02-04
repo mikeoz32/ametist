@@ -4,9 +4,19 @@ version: 0.1.1
 authors:
     - Mike Oz <kozloffsky@hotmail.com>
 
+dependencies:
+  sqlite3:
+    github: crystal-lang/crystal-sqlite3
+    version: ~> 0.22.0
+  athena-dotenv:
+    github: athena-framework/dotenv
+    version: ~> 0.2.0
+
 targets:
     ametist:
         main: src/bin/ametist.cr
+    agency:
+        main: src/bin/agency.cr
     movie:
         main: src/movie.cr
     api:

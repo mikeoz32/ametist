@@ -1,0 +1,14 @@
+version: 2.0
+shards:
+  athena-dotenv:
+    git: https://github.com/athena-framework/dotenv.git
+    version: 0.2.1
+
+  db:
+    git: https://github.com/crystal-lang/crystal-db.git
+    version: 0.14.0
+
+  sqlite3:
+    git: https://github.com/crystal-lang/crystal-sqlite3.git
+    version: 0.22.0
+

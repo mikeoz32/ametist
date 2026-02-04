@@ -20,7 +20,7 @@ describe Collection do
   end
   it "Should add documents" do
     collection = Collection.new(test_schema)
-    collection.add(Document.new(1, [
+    collection.add(Document.new("1", [
       DocumentField.new("embeddings", [1.0, 2.0] of Float32),
       DocumentField.new("int", 3),
       DocumentField.new("string", "hello"),
@@ -28,11 +28,36 @@ describe Collection do
     ]))
     collection.size.should eq(1)
 
-    collection.get(0).should_not be_nil
-    puts collection.get(0)["embeddings"]
-    collection.get(0)["embeddings"].should eq([1.0, 2.0])
-    collection.get(0)["int"].should eq(3)
-    collection.get(0)["string"].should eq("hello")
-    collection.get(0)["float"].should eq(Float32.new(3.14))
+    doc = collection.get(0)
+    doc.should_not be_nil
+    doc.not_nil!["embeddings"].should eq([1.0, 2.0])
+    doc.not_nil!["int"].should eq(3)
+    doc.not_nil!["string"].should eq("hello")
+    doc.not_nil!["float"].should eq(Float32.new(3.14))
+  end
+
+  it "filters query results" do
+    collection = Collection.new(test_schema)
+    collection.add(Document.new("1", [
+      DocumentField.new("embeddings", [1.0, 0.0] of Float32),
+      DocumentField.new("int", 1),
+      DocumentField.new("string", "alpha"),
+      DocumentField.new("float", 1.0)
+    ]))
+    collection.add(Document.new("2", [
+      DocumentField.new("embeddings", [0.0, 1.0] of Float32),
+      DocumentField.new("int", 2),
+      DocumentField.new("string", "beta"),
+      DocumentField.new("float", 2.0)
+    ]))
+
+    filter = FilterAnd.new([
+      FilterTerm.new("int", FilterOp::Gt, 1),
+      FilterTerm.new("string", FilterOp::Contains, "et")
+    ] of Filter)
+
+    results = collection.query("embeddings", [0.0, 1.0] of Float32, 5, filter)
+    results.size.should eq(1)
+    results.first.id.should eq("2")
   end
 end

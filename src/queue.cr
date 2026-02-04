@@ -16,14 +16,17 @@ module Movie
   class Queue(T)
     getter first : QueueNode(T)?
     getter last : QueueNode(T)?
-
-    getter size : Int32
+    @size : Int32
 
     def initialize
       @first = nil
       @last = nil
       @mutex = Mutex.new
       @size = 0
+    end
+
+    def size : Int32
+      @mutex.synchronize { @size }
     end
 
     def enqueue(value : T)
@@ -57,8 +60,10 @@ module Movie
     end
 
     def dequeue(&)
-      while @first
-        yield dequeue
+      loop do
+        value = dequeue
+        break if value.nil?
+        yield value
       end
     end
   end
