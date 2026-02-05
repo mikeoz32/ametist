@@ -1,9 +1,9 @@
 require "../spec_helper"
-require "../../src/agency/context_builder"
-require "../../src/agency/memory_actor"
-require "../../src/agency/graph_store_extension"
-require "../../src/agency/context_store_extension"
-require "../../src/agency/memory_policy"
+require "../../src/agency/context/builder"
+require "../../src/agency/memory/actor"
+require "../../src/agency/stores/graph_store_extension"
+require "../../src/agency/context/store_extension"
+require "../../src/agency/memory/policy"
 
 private class ReplyActor(T) < Movie::AbstractBehavior(T)
   def initialize(@promise : Movie::Promise(T))

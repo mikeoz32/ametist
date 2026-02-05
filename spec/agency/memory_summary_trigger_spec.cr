@@ -1,7 +1,7 @@
 require "../spec_helper"
-require "../../src/agency/memory_actor"
-require "../../src/agency/memory_policy"
-require "../../src/agency/summarizer"
+require "../../src/agency/memory/actor"
+require "../../src/agency/memory/policy"
+require "../../src/agency/memory/summarizer"
 
 private class SummaryProbe < Movie::AbstractBehavior(Agency::SummarizerMessage)
   def initialize(@promise : Movie::Promise(Agency::SummarizerMessage))

@@ -1,6 +1,6 @@
 require "../spec_helper"
 require "file_utils"
-require "../../src/agency/filesystem_skill_source"
+require "../../src/agency/skills/filesystem_source"
 
 private def write_skill(path : String, body : String)
   FileUtils.mkdir_p(path)

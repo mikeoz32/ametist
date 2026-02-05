@@ -1,5 +1,5 @@
 require "../movie"
-require "../agency/system_message"
+require "../agency/runtime/system_message"
 require "./collection"
 require "./manager"
 

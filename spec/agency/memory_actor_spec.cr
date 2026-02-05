@@ -1,5 +1,5 @@
 require "../spec_helper"
-require "../../src/agency/memory_actor"
+require "../../src/agency/memory/actor"
 require "../../src/ametist"
 
 private class ReplyActor(T) < Movie::AbstractBehavior(T)

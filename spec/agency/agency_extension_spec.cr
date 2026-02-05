@@ -1,6 +1,6 @@
 require "../spec_helper"
-require "../../src/agency/agency_extension"
-require "../../src/agency/skill_registry"
+require "../../src/agency/runtime/extension"
+require "../../src/agency/skills/registry"
 
 private class MutableSkillSource < Agency::SkillSource
   def initialize
@@ -56,7 +56,7 @@ describe Agency::AgencyExtension do
     extension.list_skills.await(2.seconds).map(&.id).should eq(["s3"])
   end
 
-  it "updates allowlist for agents" do
+  it "updates toolset allowlist for agents" do
     system = Agency.spec_system
     channel = Channel(Array(String)).new(2)
     client = ToolCaptureLLMClient.new(channel, {"type" => "final", "content" => "ok"}.to_json)
@@ -73,8 +73,8 @@ describe Agency::AgencyExtension do
     extension.run("first", "s1", "gpt-3.5-turbo", "agent-1").await(6.seconds)
     channel.receive.empty?.should be_true
 
-    extension.update_allowed_tools("agent-1", ["echo"]).await(6.seconds)
-    extension.run("second", "s1", "gpt-3.5-turbo", "agent-1").await(6.seconds)
-    channel.receive.includes?("echo").should be_true
+    extension.update_allowed_toolsets("agent-1", ["local"]).await(6.seconds)
+    extension.run("second", "s2", "gpt-3.5-turbo", "agent-1").await(6.seconds)
+    channel.receive.includes?("local.echo").should be_true
   end
 end

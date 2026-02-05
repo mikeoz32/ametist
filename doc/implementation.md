@@ -47,7 +47,7 @@ Status: DONE
 
 ### Task 2.1 — Define protocols
 - What: Define typed messages for AgentActor, AgentSession, AgentRun (e.g., `StartSession`, `RunPrompt`, `RunResult`, `RunFailed`, `ToolCall`, `ToolResult`).
-- DoD: Protocol types exist in `src/agency/protocol.cr` or dedicated files; all actors use those types.
+- DoD: Protocol types exist in `src/agency/runtime/protocol.cr` or dedicated files; all actors use those types.
 Status: DONE
 
 #### Subtasks

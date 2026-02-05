@@ -1,12 +1,12 @@
 require "../spec_helper"
 require "../../src/movie"
-require "../../src/agency/agent_messages"
-require "../../src/agency/agent_actor"
-require "../../src/agency/agent_session"
-require "../../src/agency/agent_run"
-require "../../src/agency/llm_gateway"
-require "../../src/agency/llm_client"
-require "../../src/agency/agent_profile"
+require "../../src/agency/agents/messages"
+require "../../src/agency/agents/actor"
+require "../../src/agency/agents/session"
+require "../../src/agency/agents/run"
+require "../../src/agency/llm/gateway"
+require "../../src/agency/llm/client"
+require "../../src/agency/agents/profile"
 
 module Agency
   class ActorFixedLLMClient < LLMClient
@@ -68,7 +68,7 @@ describe Agency::AgentActor do
       Agency::AgentActor.behavior(
         profile,
         llm_gateway,
-        [] of Agency::ToolSpec,
+        [] of Agency::ToolSetDefinition,
         Movie::SupervisionConfig.default,
         Movie::SupervisionConfig.default
       )
@@ -98,7 +98,7 @@ describe Agency::AgentActor do
       Agency::AgentActor.behavior(
         profile,
         llm_gateway,
-        [] of Agency::ToolSpec,
+        [] of Agency::ToolSetDefinition,
         Movie::SupervisionConfig.default,
         Movie::SupervisionConfig.default
       )
@@ -142,7 +142,7 @@ describe Agency::AgentActor do
       Agency::AgentActor.behavior(
         profile,
         llm_gateway,
-        [] of Agency::ToolSpec,
+        [] of Agency::ToolSetDefinition,
         Movie::SupervisionConfig.default,
         Movie::SupervisionConfig.default
       )

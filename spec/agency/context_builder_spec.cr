@@ -1,7 +1,7 @@
 require "../spec_helper"
-require "../../src/agency/context_builder"
-require "../../src/agency/memory_actor"
-require "../../src/agency/embedder_extension"
+require "../../src/agency/context/builder"
+require "../../src/agency/memory/actor"
+require "../../src/agency/stores/embedder_extension"
 require "../../src/ametist"
 
 private class ReplyActor(T) < Movie::AbstractBehavior(T)

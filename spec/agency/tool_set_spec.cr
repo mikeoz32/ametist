@@ -1,7 +1,7 @@
 require "../spec_helper"
 require "../../src/movie"
-require "../../src/agency/tool_set"
-require "../../src/agency/protocol"
+require "../../src/agency/tools/tool_set"
+require "../../src/agency/runtime/protocol"
 
 module Agency
   class ErrorToolSet < ToolSet

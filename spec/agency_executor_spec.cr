@@ -1,6 +1,6 @@
 require "./spec_helper"
 require "../src/movie"
-require "../src/agency/result_receiver"
+require "../src/agency/runtime/result_receiver"
 
 # Simple message used by the actor‑based Future example
 struct ResultMsg

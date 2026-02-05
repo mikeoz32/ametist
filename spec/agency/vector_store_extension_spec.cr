@@ -1,5 +1,5 @@
 require "../spec_helper"
-require "../../src/agency/vector_store_extension"
+require "../../src/agency/stores/vector_store_extension"
 require "../../src/ametist"
 
 describe Agency::VectorStoreExtension do

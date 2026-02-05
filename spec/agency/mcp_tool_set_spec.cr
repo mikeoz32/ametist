@@ -1,19 +1,22 @@
 require "../spec_helper"
 require "../../src/movie"
-require "../../src/agency/mcp_tool_set"
-require "../../src/agency/mcp_adapter"
+require "../../src/agency/mcp/tool_set"
+require "../../src/agency/mcp/adapter"
 
 module Agency
-  class MCPTestAdapter < Movie::AbstractBehavior(MCPMessage)
+  class MCPTestAdapter < Movie::AbstractBehavior(ToolSetMessage)
     def initialize(@promise : Movie::Promise(String))
     end
 
     def receive(message, ctx)
-      @promise.try_success(message.call.name)
-      if reply_to = message.reply_to
-        reply_to << ToolResult.new(message.call.id, message.call.name, "ok")
+      case message
+      when ToolCall
+        @promise.try_success(message.name)
+        if reply_to = ctx.sender.as?(Movie::ActorRef(ToolResult))
+          reply_to << ToolResult.new(message.id, message.name, "ok")
+        end
       end
-      Movie::Behaviors(MCPMessage).same
+      Movie::Behaviors(ToolSetMessage).same
     end
   end
 

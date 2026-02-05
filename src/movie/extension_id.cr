@@ -23,8 +23,7 @@ module Movie
         return ext
       end
       ext = create(system)
-      system.register_extension(ext.as(Extension))
-      ext
+      system.extensions.get_or_register(T, ext.as(Extension))
     end
   end
 end

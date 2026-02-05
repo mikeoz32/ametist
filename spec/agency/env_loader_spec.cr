@@ -1,6 +1,6 @@
 require "../spec_helper"
 require "file_utils"
-require "../../src/agency/env_loader"
+require "../../src/agency/runtime/env_loader"
 
 private def with_tmpdir(prefix : String, &block : String ->)
   root = File.join(Dir.tempdir, "#{prefix}-#{UUID.random}")

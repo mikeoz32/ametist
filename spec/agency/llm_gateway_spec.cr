@@ -1,6 +1,6 @@
 require "../spec_helper"
-require "../../src/agency/llm_gateway"
-require "../../src/agency/protocol"
+require "../../src/agency/llm/gateway"
+require "../../src/agency/runtime/protocol"
 
 describe Agency::LLMGateway do
   it "formats messages for logging" do

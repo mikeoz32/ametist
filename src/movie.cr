@@ -522,6 +522,25 @@ module Movie
       extension.start
     end
 
+    # Registers an extension if missing and returns the registered instance.
+    # Uses the provided type to key the registry to avoid races.
+    def get_or_register(type : T.class, extension : Extension) : T forall T
+      key = T.name
+      existing = nil.as(Extension?)
+      @mutex.synchronize do
+        if ext = @extensions[key]?
+          existing = ext
+        else
+          @extensions[key] = extension
+        end
+      end
+      if existing
+        return existing.as(T)
+      end
+      extension.start
+      extension.as(T)
+    end
+
     # Returns an extension by type, or nil if not registered.
     def get(type : T.class) : T? forall T
       key = T.name
@@ -877,6 +896,33 @@ module Movie
       listener_ref = listener.as(ActorRef(Movie::Ask::Response(R)))
 
       root.tell_from(listener_ref.as(ActorRefBase), message)
+
+      if timeout
+        timer_handle = scheduler.schedule_once(timeout) do
+          if state.promise.future.pending?
+            state.promise.try_failure(FutureTimeout.new)
+            listener.send_system(STOP)
+          end
+        end
+        state.timer_handle = timer_handle
+      end
+
+      state.promise.future
+    end
+
+    # Ask a specific actor and receive a response, similar to ActorContext#ask.
+    def ask(target : ActorRef(M), message : M, response_type : R.class = Nil, timeout : Time::Span? = nil) : Future(R) forall M, R
+      state = Movie::Ask::AskState(R).new(Promise(R).new)
+
+      listener_behavior = Behaviors(Movie::Ask::Response(R)).setup do |listener_context|
+        listener_context.watch(target)
+        Movie::Ask::ListenerBehavior(R).new(state, target.as(ActorRefBase))
+      end
+
+      listener = spawn(listener_behavior, RestartStrategy::STOP, SupervisionConfig.default)
+      listener_ref = listener.as(ActorRef(Movie::Ask::Response(R)))
+
+      target.tell_from(listener_ref.as(ActorRefBase), message)
 
       if timeout
         timer_handle = scheduler.schedule_once(timeout) do

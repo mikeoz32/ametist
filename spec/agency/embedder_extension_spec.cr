@@ -1,5 +1,5 @@
 require "../spec_helper"
-require "../../src/agency/embedder_extension"
+require "../../src/agency/stores/embedder_extension"
 
 private class FakeResponse
   getter status_code : Int32

@@ -1,7 +1,7 @@
 require "../spec_helper"
 require "../../src/movie"
-require "../../src/agency/agent_manager"
-require "../../src/agency/llm_client"
+require "../../src/agency/agents/manager"
+require "../../src/agency/llm/client"
 
 module Agency
   class FixedLLMClient < LLMClient

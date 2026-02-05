@@ -1,12 +1,13 @@
 require "../spec_helper"
 require "../../src/movie"
-require "../../src/agency/agent_messages"
-require "../../src/agency/agent_run"
-require "../../src/agency/llm_gateway"
-require "../../src/agency/llm_client"
-require "../../src/agency/tool_set"
-require "../../src/agency/context_builder"
-require "../../src/agency/memory_actor"
+require "../../src/agency/agents/messages"
+require "../../src/agency/agents/run"
+require "../../src/agency/llm/gateway"
+require "../../src/agency/llm/client"
+require "../../src/agency/tools/tool_set"
+require "../../src/agency/tools/tool_router"
+require "../../src/agency/context/builder"
+require "../../src/agency/memory/actor"
 
 module Agency
   class SequenceLLMClient < LLMClient
@@ -73,7 +74,7 @@ end
 
 describe Agency::AgentRun do
   it "executes a tool call and completes" do
-    tool_call = {"type" => "tool_call", "tool_calls" => [{"id" => "call-1", "name" => "echo", "arguments" => {"text" => "hi"}}]}.to_json
+    tool_call = {"type" => "tool_call", "tool_calls" => [{"id" => "call-1", "name" => "local.echo", "arguments" => {"text" => "hi"}}]}.to_json
     final = {"type" => "final", "content" => "done"}.to_json
 
     system = Agency.spec_system
@@ -81,10 +82,16 @@ describe Agency::AgentRun do
     client = Agency::SequenceLLMClient.new([tool_call, final])
     llm_gateway = system.spawn(Agency::LLMGateway.behavior(client))
     tool_set = system.spawn(Agency::DefaultToolSet.new(executor))
+    tool_router = system.spawn(Agency::ToolRouter.new({"local" => tool_set}))
     context_builder = system.spawn(Agency::ContextBuilder.new)
 
     tool_spec = Agency::ToolSpec.new(
       "echo",
+      "echo tool",
+      JSON.parse(%({"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}))
+    )
+    prefixed_spec = Agency::ToolSpec.new(
+      "local.echo",
       "echo tool",
       JSON.parse(%({"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}))
     )
@@ -102,8 +109,8 @@ describe Agency::AgentRun do
         "s1",
         "hello",
         llm_gateway,
-        tool_set,
-        [tool_spec],
+        tool_router,
+        [prefixed_spec],
         context_builder,
         "gpt-3.5-turbo",
         2,
@@ -120,17 +127,23 @@ describe Agency::AgentRun do
   end
 
   it "fails when max steps is reached" do
-    tool_call = {"type" => "tool_call", "tool_calls" => [{"id" => "call-1", "name" => "echo", "arguments" => {"text" => "hi"}}]}.to_json
+    tool_call = {"type" => "tool_call", "tool_calls" => [{"id" => "call-1", "name" => "local.echo", "arguments" => {"text" => "hi"}}]}.to_json
 
     system = Agency.spec_system
     executor = Movie::Execution.get(system)
     client = Agency::SequenceLLMClient.new([tool_call, tool_call])
     llm_gateway = system.spawn(Agency::LLMGateway.behavior(client))
     tool_set = system.spawn(Agency::DefaultToolSet.new(executor))
+    tool_router = system.spawn(Agency::ToolRouter.new({"local" => tool_set}))
     context_builder = system.spawn(Agency::ContextBuilder.new)
 
     tool_spec = Agency::ToolSpec.new(
       "echo",
+      "echo tool",
+      JSON.parse(%({"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}))
+    )
+    prefixed_spec = Agency::ToolSpec.new(
+      "local.echo",
       "echo tool",
       JSON.parse(%({"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}))
     )
@@ -148,8 +161,8 @@ describe Agency::AgentRun do
         "s1",
         "hello",
         llm_gateway,
-        tool_set,
-        [tool_spec],
+        tool_router,
+        [prefixed_spec],
         context_builder,
         "gpt-3.5-turbo",
         1,
@@ -171,6 +184,7 @@ describe Agency::AgentRun do
     client = Agency::SequenceLLMClient.new([final])
     llm_gateway = system.spawn(Agency::LLMGateway.behavior(client))
     tool_set = system.spawn(Agency::DefaultToolSet.new(executor))
+    tool_router = system.spawn(Agency::ToolRouter.new({"local" => tool_set}))
     context_builder = system.spawn(Agency::ContextBuilder.new)
 
     delta_promise = Movie::Promise(Array(Agency::Message)).new
@@ -182,7 +196,7 @@ describe Agency::AgentRun do
         "s1",
         "hello",
         llm_gateway,
-        tool_set,
+        tool_router,
         [] of Agency::ToolSpec,
         context_builder,
         "gpt-3.5-turbo",

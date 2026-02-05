@@ -1,12 +1,12 @@
 require "../spec_helper"
 require "../../src/movie"
-require "../../src/agency/agent_messages"
-require "../../src/agency/agent_session"
-require "../../src/agency/agent_run"
-require "../../src/agency/llm_gateway"
-require "../../src/agency/llm_client"
-require "../../src/agency/tool_set"
-require "../../src/agency/context_builder"
+require "../../src/agency/agents/messages"
+require "../../src/agency/agents/session"
+require "../../src/agency/agents/run"
+require "../../src/agency/llm/gateway"
+require "../../src/agency/llm/client"
+require "../../src/agency/tools/tool_set"
+require "../../src/agency/context/builder"
 
 module Agency
   class SessionFixedLLMClient < LLMClient
@@ -71,15 +71,14 @@ describe Agency::AgentSession do
     executor = Movie::Execution.get(system)
     client = Agency::SessionFixedLLMClient.new({"type" => "final", "content" => "ok"}.to_json)
     llm_gateway = system.spawn(Agency::LLMGateway.behavior(client))
-    tool_set = system.spawn(Agency::DefaultToolSet.new(executor))
     context_builder = system.spawn(Agency::ContextBuilder.new)
 
-    session = system.spawn(Agency::AgentSession.behavior("session-1", llm_gateway, tool_set, context_builder, nil, 4, 50))
+    session = system.spawn(Agency::AgentSession.behavior("session-1", llm_gateway, [] of Agency::ToolSetDefinition, context_builder, nil, 4, 50))
 
     promise = Movie::Promise(String).new
     receiver = system.spawn(Agency::StringReceiver.new(promise))
 
-    session << Agency::SessionPrompt.new("default", "hello", "gpt-3.5-turbo", [] of Agency::ToolSpec, receiver)
+    session << Agency::SessionPrompt.new("default", "hello", "gpt-3.5-turbo", receiver)
     result = promise.future.await(5.seconds)
     result.should eq("ok")
   end
@@ -90,18 +89,17 @@ describe Agency::AgentSession do
     gate = Channel(Nil).new
     client = Agency::BlockingLLMClient.new(gate)
     llm_gateway = system.spawn(Agency::LLMGateway.behavior(client))
-    tool_set = system.spawn(Agency::DefaultToolSet.new(executor))
     context_builder = system.spawn(Agency::ContextBuilder.new)
 
-    session = system.spawn(Agency::AgentSession.behavior("session-1", llm_gateway, tool_set, context_builder, nil, 4, 50))
+    session = system.spawn(Agency::AgentSession.behavior("session-1", llm_gateway, [] of Agency::ToolSetDefinition, context_builder, nil, 4, 50))
 
     first_promise = Movie::Promise(String).new
     first_receiver = system.spawn(Agency::StringReceiver.new(first_promise))
-    session << Agency::SessionPrompt.new("default", "first", "gpt-3.5-turbo", [] of Agency::ToolSpec, first_receiver)
+    session << Agency::SessionPrompt.new("default", "first", "gpt-3.5-turbo", first_receiver)
 
     second_promise = Movie::Promise(String).new
     second_receiver = system.spawn(Agency::StringReceiver.new(second_promise))
-    session << Agency::SessionPrompt.new("default", "second", "gpt-3.5-turbo", [] of Agency::ToolSpec, second_receiver)
+    session << Agency::SessionPrompt.new("default", "second", "gpt-3.5-turbo", second_receiver)
 
     busy = second_promise.future.await(5.seconds)
     busy.includes?("session already running").should be_true
@@ -117,14 +115,13 @@ describe Agency::AgentSession do
     gate = Channel(Nil).new
     client = Agency::BlockingLLMClient.new(gate)
     llm_gateway = system.spawn(Agency::LLMGateway.behavior(client))
-    tool_set = system.spawn(Agency::DefaultToolSet.new(executor))
     context_builder = system.spawn(Agency::ContextBuilder.new)
 
-    session = system.spawn(Agency::AgentSession.behavior("session-42", llm_gateway, tool_set, context_builder, nil, 4, 50))
+    session = system.spawn(Agency::AgentSession.behavior("session-42", llm_gateway, [] of Agency::ToolSetDefinition, context_builder, nil, 4, 50))
 
     run_promise = Movie::Promise(String).new
     run_receiver = system.spawn(Agency::StringReceiver.new(run_promise))
-    session << Agency::SessionPrompt.new("default", "state", "gpt-3.5-turbo", [] of Agency::ToolSpec, run_receiver)
+    session << Agency::SessionPrompt.new("default", "state", "gpt-3.5-turbo", run_receiver)
 
     state_promise = Movie::Promise(Agency::SessionState).new
     state_receiver = system.spawn(Agency::SessionStateReceiver.new(state_promise))
@@ -154,14 +151,13 @@ describe Agency::AgentSession do
 
     client = Agency::RecordingLLMClient.new({"type" => "final", "content" => "ok"}.to_json)
     llm_gateway = system.spawn(Agency::LLMGateway.behavior(client))
-    tool_set = system.spawn(Agency::DefaultToolSet.new(executor))
     context_builder = system.spawn(Agency::ContextBuilder.new)
 
-    session = system.spawn(Agency::AgentSession.behavior("session-1", llm_gateway, tool_set, context_builder, nil, 4, 50))
+    session = system.spawn(Agency::AgentSession.behavior("session-1", llm_gateway, [] of Agency::ToolSetDefinition, context_builder, nil, 4, 50))
 
     promise = Movie::Promise(String).new
     receiver = system.spawn(Agency::StringReceiver.new(promise))
-    session << Agency::SessionPrompt.new("default", "current", "gpt-3.5-turbo", [] of Agency::ToolSpec, receiver)
+    session << Agency::SessionPrompt.new("default", "current", "gpt-3.5-turbo", receiver)
     promise.future.await(5.seconds).should eq("ok")
 
     client.last_messages.any? { |msg| msg.content == "from store" }.should be_true

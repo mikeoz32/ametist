@@ -1,5 +1,5 @@
 require "../spec_helper"
-require "../../src/agency/context_store"
+require "../../src/agency/context/store"
 
 describe Agency::ContextStore do
   it "stores and fetches session events" do

@@ -1,5 +1,5 @@
 require "../spec_helper"
-require "../../src/agency/token_estimator"
+require "../../src/agency/memory/token_estimator"
 
 describe Agency::TokenEstimator do
   it "estimates tokens by character count" do

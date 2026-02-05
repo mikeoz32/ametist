@@ -1,5 +1,5 @@
 require "../spec_helper"
-require "../../src/agency/graph_store"
+require "../../src/agency/stores/graph_store"
 
 describe Agency::GraphStore do
   it "adds and retrieves nodes and neighbors" do

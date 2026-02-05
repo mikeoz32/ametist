@@ -1,7 +1,7 @@
 require "../spec_helper"
-require "../../src/agency/summarizer"
-require "../../src/agency/memory_actor"
-require "../../src/agency/context_store_extension"
+require "../../src/agency/memory/summarizer"
+require "../../src/agency/memory/actor"
+require "../../src/agency/context/store_extension"
 
 private class FakeSummarizerClient < Agency::SummarizerClient
   def summarize(summary : String?, events : Array(Agency::Message), model : String) : String

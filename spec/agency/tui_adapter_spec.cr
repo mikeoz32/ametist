@@ -1,7 +1,7 @@
 require "../spec_helper"
-require "../../src/agency/tui_adapter"
-require "../../src/agency/agent_manager"
-require "../../src/agency/llm_client"
+require "../../src/agency/tui/adapter"
+require "../../src/agency/agents/manager"
+require "../../src/agency/llm/client"
 
 describe Agency::TuiAdapter do
   it "runs a prompt and returns the response" do

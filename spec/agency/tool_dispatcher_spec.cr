@@ -1,6 +1,6 @@
 require "../spec_helper"
 require "../../src/movie"
-require "../../src/agency/tool_dispatcher"
+require "../../src/agency/tools/dispatcher"
 
 module Agency
   class ToolEcho < Movie::AbstractBehavior(ToolCall)

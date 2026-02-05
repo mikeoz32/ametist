@@ -1,5 +1,5 @@
 require "../spec_helper"
-require "../../src/agency/memory_policy"
+require "../../src/agency/memory/policy"
 
 describe Agency::MemoryPolicy do
   it "uses defaults and allows overrides" do

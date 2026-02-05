@@ -1,7 +1,7 @@
 require "../spec_helper"
 require "../../src/movie"
-require "../../src/agency/agent_manager"
-require "../../src/agency/llm_client"
+require "../../src/agency/agents/manager"
+require "../../src/agency/llm/client"
 
 module Agency
   class FixedLLMClient < LLMClient
@@ -25,12 +25,15 @@ module Agency
     end
   end
 
-  class NoopTool < Movie::AbstractBehavior(ToolCall)
+  class NoopToolSet < Movie::AbstractBehavior(ToolSetMessage)
     def receive(message, ctx)
-      if sender = ctx.sender.as?(Movie::ActorRef(ToolResult))
-        sender << ToolResult.new(message.id, message.name, "ok")
+      case message
+      when ToolCall
+        if sender = ctx.sender.as?(Movie::ActorRef(ToolResult))
+          sender << ToolResult.new(message.id, message.name, "ok")
+        end
       end
-      Movie::Behaviors(ToolCall).same
+      Movie::Behaviors(ToolSetMessage).same
     end
   end
 end
@@ -52,13 +55,13 @@ describe Agency::AgentManager do
     result.should eq("ok")
   end
 
-  it "broadcasts tool updates to existing agents" do
+  it "exposes newly registered toolsets for new sessions" do
     graph_path = "/tmp/agency_agent_manager_graph_#{UUID.random}.sqlite3"
     context_path = "/tmp/agency_agent_manager_context_#{UUID.random}.sqlite3"
     config = Movie::Config.builder
       .set("agency.graph.db_path", graph_path)
       .set("agency.context.db_path", context_path)
-      .set("agency.agents.agent-1.allowed_tools", ["echo"])
+      .set("agency.agents.agent-1.allowed_toolsets", ["local"])
       .build
     system = Movie::ActorSystem(Agency::SystemMessage).new(Movie::Behaviors(Agency::SystemMessage).same, config)
     Movie::Execution.get(system)
@@ -75,11 +78,12 @@ describe Agency::AgentManager do
       "echo tool",
       JSON.parse(%({"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}))
     )
-    manager.register_tool(tool_spec, Agency::NoopTool.new, "echo")
+    tool_set = system.spawn(Agency::NoopToolSet.new)
+    manager.register_toolset("local", "local", [tool_spec], tool_set)
 
-    manager.run("second", "s1", "gpt-3.5-turbo", "agent-1").await(6.seconds)
+    manager.run("second", "s2", "gpt-3.5-turbo", "agent-1").await(6.seconds)
     names2 = channel.receive
-    names2.includes?("echo").should be_true
+    names2.includes?("local.echo").should be_true
   end
 
   it "does not expose tools without allowlist" do
@@ -100,7 +104,8 @@ describe Agency::AgentManager do
       "echo tool",
       JSON.parse(%({"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}))
     )
-    manager.register_tool(tool_spec, Agency::NoopTool.new, "echo")
+    tool_set = system.spawn(Agency::NoopToolSet.new)
+    manager.register_toolset("local", "local", [tool_spec], tool_set)
 
     manager.run("third", "s1", "gpt-3.5-turbo", "agent-1").await(6.seconds)
     names = channel.receive
@@ -125,15 +130,16 @@ describe Agency::AgentManager do
       "echo tool",
       JSON.parse(%({"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}))
     )
-    manager.register_tool(tool_spec, Agency::NoopTool.new, "echo")
+    tool_set = system.spawn(Agency::NoopToolSet.new)
+    manager.register_toolset("local", "local", [tool_spec], tool_set)
 
     manager.run("first", "s1", "gpt-3.5-turbo", "agent-1").await(6.seconds)
     names1 = channel.receive
     names1.empty?.should be_true
 
-    manager.update_allowed_tools("agent-1", ["echo"]).await(6.seconds)
-    manager.run("second", "s1", "gpt-3.5-turbo", "agent-1").await(6.seconds)
+    manager.update_allowed_toolsets("agent-1", ["local"]).await(6.seconds)
+    manager.run("second", "s2", "gpt-3.5-turbo", "agent-1").await(6.seconds)
     names2 = channel.receive
-    names2.includes?("echo").should be_true
+    names2.includes?("local.echo").should be_true
   end
 end

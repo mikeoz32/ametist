@@ -1,6 +1,6 @@
 # spec/agency/state_store_spec.cr
 require "../spec_helper"
-require "../../src/agency/state_store"
+require "../../src/agency/stores/state_store"
 
 describe Agency::StateStore do
   it "stores and retrieves a string value" do

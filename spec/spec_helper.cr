@@ -1,7 +1,7 @@
 require "spec"
 require "uuid"
 require "../src/ametist"
-require "../src/agency/system_message"
+require "../src/agency/runtime/system_message"
 
 module Agency
   def self.spec_system : Movie::ActorSystem(SystemMessage)

@@ -1,5 +1,5 @@
 require "../spec_helper"
-require "../../src/agency/skill_registry"
+require "../../src/agency/skills/registry"
 
 private class MutableSkillSource < Agency::SkillSource
   def initialize
