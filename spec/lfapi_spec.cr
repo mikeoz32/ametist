@@ -1,5 +1,6 @@
 require "./spec_helper"
 require "../src/lfapi"
+require "http/client"
 
 class JsonModel
   include JSON::Serializable
@@ -41,6 +42,15 @@ class TestAPIWithParams
   @[LF::APIRoute::Get("/settings/:key")]
   def get_setting(key : String, enabled : Bool)
     "Setting #{key} is #{enabled}"
+  end
+end
+
+class TestResourceJsonResponse
+  include LF::APIRoute
+
+  @[LF::APIRoute::Get("/json-response")]
+  def json_response
+    LF::JSONResponse.create(JsonModel.new(1, "ok"))
   end
 end
 
@@ -416,6 +426,26 @@ describe "LF::APIRoute" do
     response.status.should eq(HTTP::Status::INTERNAL_SERVER_ERROR)
     body = io.to_s.split("\r\n\r\n", 2)[1]
     body.should eq("DI context not initialized")
+  end
+
+  it "renders JSONResponse return values" do
+    app = LF::LFApi.new do |router|
+      TestResourceJsonResponse.new.setup_routes(router)
+    end
+
+    io = IO::Memory.new
+    request = HTTP::Request.new("GET", "/json-response")
+    response = HTTP::Server::Response.new(io)
+    context = HTTP::Server::Context.new(request, response)
+
+    app.call(context)
+    response.close
+
+    response.status.should eq(HTTP::Status::OK)
+    parsed = HTTP::Client::Response.from_io(IO::Memory.new(io.to_s))
+    payload = JSON.parse(parsed.body)
+    payload["id"].as_i.should eq(1)
+    payload["name"].as_s.should eq("ok")
   end
 end
 

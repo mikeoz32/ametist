@@ -270,7 +270,7 @@ module LF
                        raise "Bad Request" if ctx.request.body.nil?
                        begin
                        {{ arg.name }} = {{arg.restriction.id}}.from_json(ctx.request.body.as(IO))
-                       rescue e : JSON::SerializableError
+                       rescue e : JSON::SerializableError | JSON::ParseException
                          raise LF::BadRequest.new e.message.as(String)
                        end
                      {% else %}
@@ -279,7 +279,12 @@ module LF
                    end
                   {% end %}
                  {% end %}
-                 ctx.response.print {{ method.name }}({% for arg in method.args %}{{ arg.name }},{% end %})
+                 result = {{ method.name }}({% for arg in method.args %}{{ arg.name }},{% end %})
+                 if result.is_a?(LF::Response)
+                   result.as(LF::Response).call(ctx)
+                 else
+                   ctx.response.print result
+                 end
                rescue e : LF::BadRequest
                  raise e
                rescue e : LF::InternalServerError

@@ -5,3 +5,4 @@
 *.dwarf
 .env
 data/agency_context.sqlite3
+data/movie_persistence.sqlite3*

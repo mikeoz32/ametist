@@ -80,7 +80,7 @@ describe Movie::EventSourcing do
       Movie::CounterBehavior.new(pid.persistence_id, store)
     end
 
-    counter = ext.get_entity_ref(Movie::Persistence.id(Movie::CounterBehavior, "counter-1"))
+    counter = ext.get_entity_ref_as(Movie::CounterCommand, Movie::Persistence.id(Movie::CounterBehavior, "counter-1"))
       .as(Movie::ActorRef(Movie::CounterCommand))
 
     counter << Movie::Increment.new(2)
@@ -99,7 +99,7 @@ describe Movie::EventSourcing do
       Movie::CounterBehavior.new(pid.persistence_id, store)
     end
 
-    counter2 = ext2.get_entity_ref(Movie::Persistence.id(Movie::CounterBehavior, "counter-1"))
+    counter2 = ext2.get_entity_ref_as(Movie::CounterCommand, Movie::Persistence.id(Movie::CounterBehavior, "counter-1"))
       .as(Movie::ActorRef(Movie::CounterCommand))
 
     promise2 = Movie::Promise(Int32).new

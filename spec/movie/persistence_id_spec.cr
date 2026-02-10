@@ -23,4 +23,9 @@ describe Movie::Persistence::Id do
     id.entity_type.should eq(Movie::DummyBehavior.name)
     id.persistence_id.should eq("#{Movie::DummyBehavior.name}:x1")
   end
+
+  it "builds deterministic entity name from id" do
+    id = Movie::Persistence::Id.new("Test", "abc-123")
+    Movie::Persistence.entity_name(id).should eq("entity-test-abc-123")
+  end
 end

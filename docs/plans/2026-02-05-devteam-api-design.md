@@ -65,9 +65,13 @@ Auth: static API key (header or query parameter).
 - On command: persist state, reply.
 
 ### Extensions
-- `Movie::EventSourcing.get(system).get_entity_ref(persistence_id, &factory)`
-- `Movie::DurableState.get(system).get_entity_ref(persistence_id, &factory)`
-- Registry caches entity refs per `persistence_id`.
+- `Persistence::Id` combines `entity_type` and `entity_id` (`"Type:Id"`).
+- Extensions register entity factories up front:
+  - `EventSourcing.register_entity("Type") { |id, store| ... }`
+  - `DurableState.register_entity(TypeClass) { |id, store| ... }`
+- Lookup is Akka-style: `get_entity_ref(Persistence::Id)`
+  - Typed helper: `get_entity_ref_as(MessageType, Persistence::Id)`
+- Registry actor caches entity refs per `Persistence::Id` and owns children (supervision).
 
 ### Storage
 - SQLite via DB shard.

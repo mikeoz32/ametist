@@ -66,8 +66,7 @@ describe Movie::DurableState do
       Movie::NameBehavior.new(pid.persistence_id, store)
     end
 
-    name_ref = ext.get_entity_ref(Movie::Persistence.id(Movie::NameBehavior, "name-1"))
-      .as(Movie::ActorRef(Movie::NameCommand))
+    name_ref = ext.get_entity_ref_as(Movie::NameCommand, Movie::Persistence.id(Movie::NameBehavior, "name-1"))
 
     name_ref << Movie::SetName.new("alice")
 
@@ -83,8 +82,7 @@ describe Movie::DurableState do
       Movie::NameBehavior.new(pid.persistence_id, store)
     end
 
-    name_ref2 = ext2.get_entity_ref(Movie::Persistence.id(Movie::NameBehavior, "name-1"))
-      .as(Movie::ActorRef(Movie::NameCommand))
+    name_ref2 = ext2.get_entity_ref_as(Movie::NameCommand, Movie::Persistence.id(Movie::NameBehavior, "name-1"))
 
     promise2 = Movie::Promise(String).new
     receiver2 = system2.spawn(Movie::StringReceiver.new(promise2))

@@ -19,6 +19,12 @@ module Movie
       Id.new(type.name, entity_id)
     end
 
+    def self.entity_name(id : Id) : String
+      type = id.entity_type.downcase.gsub(/[^a-z0-9]+/, "-")
+      ent = id.entity_id.downcase.gsub(/[^a-z0-9]+/, "-")
+      "entity-#{type}-#{ent}"
+    end
+
     # Database connection messages
     alias DbArgs = Array(DB::Any)
 
@@ -122,6 +128,11 @@ module Movie
       private def ensure_connection
         return if @conn
         @conn = DB.connect(@db_uri)
+        if @db_uri.starts_with?("sqlite3:")
+          # Reduce transient write-lock failures when multiple actors share SQLite.
+          @conn.not_nil!.exec("PRAGMA busy_timeout = 5000")
+          @conn.not_nil!.exec("PRAGMA journal_mode = WAL")
+        end
       end
     end
 
@@ -182,6 +193,9 @@ module Movie
             Movie::Ask.reply_if_asked(ctx.sender, ref)
           else
             ref = message.spawn.call(ctx, message.persistence_id)
+            if ref.path.nil?
+              ref.path = ctx.path.try { |p| p / Persistence.entity_name(message.persistence_id) }
+            end
             @entities[message.persistence_id] = ref
             Movie::Ask.reply_if_asked(ctx.sender, ref)
           end
@@ -417,7 +431,7 @@ module Movie
     def create(system : AbstractActorSystem) : DatabaseExtension
       cfg = system.config
       path = cfg.get_string("movie.persistence.db_path", "data/movie_persistence.sqlite3")
-      pool_size = cfg.get_int("movie.persistence.pool_size", 4)
+      pool_size = cfg.get_int("movie.persistence.pool_size", 1)
       DatabaseExtension.new(system, "sqlite3:#{path}", pool_size)
     end
   end
@@ -426,7 +440,7 @@ module Movie
     @state : S
     @recovered : Bool = false
 
-    def initialize(@persistence_id : String, @store : Persistence::EventStoreClient)
+    def initialize(@persistence_id : String, @store : Movie::Persistence::EventStoreClient)
       @state = empty_state
     end
 
@@ -463,7 +477,7 @@ module Movie
     @state : S
     @loaded : Bool = false
 
-    def initialize(@persistence_id : String, @store : Persistence::StateStoreClient)
+    def initialize(@persistence_id : String, @store : Movie::Persistence::StateStoreClient)
       @state = empty_state
     end
 
@@ -529,18 +543,22 @@ module Movie
       register_entity(type.name, &factory)
     end
 
-    def get_entity_ref(persistence_id : Persistence::Id) : Movie::ActorRefBase
-      spawn_proc = @factories[persistence_id.entity_type]? ||
-        raise "Entity type not registered: #{persistence_id.entity_type}"
+      def get_entity_ref(persistence_id : Persistence::Id) : Movie::ActorRefBase
+        spawn_proc = @factories[persistence_id.entity_type]? ||
+          raise "Entity type not registered: #{persistence_id.entity_type}"
 
-      @system.ask(
-        @registry,
-        Persistence::GetEntity.new(persistence_id, spawn_proc),
-        Movie::ActorRefBase,
-        @timeout
-      ).await(@timeout)
+        @system.ask(
+          @registry,
+          Persistence::GetEntity.new(persistence_id, spawn_proc),
+          Movie::ActorRefBase,
+          @timeout
+        ).await(@timeout)
+      end
+
+      def get_entity_ref_as(type : T.class, persistence_id : Persistence::Id) : ActorRef(T) forall T
+        get_entity_ref(persistence_id).as(ActorRef(T))
+      end
     end
-  end
 
   class DurableStateExtension < Extension
     alias StateFactory = Proc(
@@ -576,18 +594,22 @@ module Movie
       register_entity(type.name, &factory)
     end
 
-    def get_entity_ref(persistence_id : Persistence::Id) : Movie::ActorRefBase
-      spawn_proc = @factories[persistence_id.entity_type]? ||
-        raise "Entity type not registered: #{persistence_id.entity_type}"
+      def get_entity_ref(persistence_id : Persistence::Id) : Movie::ActorRefBase
+        spawn_proc = @factories[persistence_id.entity_type]? ||
+          raise "Entity type not registered: #{persistence_id.entity_type}"
 
-      @system.ask(
-        @registry,
-        Persistence::GetEntity.new(persistence_id, spawn_proc),
-        Movie::ActorRefBase,
-        @timeout
-      ).await(@timeout)
+        @system.ask(
+          @registry,
+          Persistence::GetEntity.new(persistence_id, spawn_proc),
+          Movie::ActorRefBase,
+          @timeout
+        ).await(@timeout)
+      end
+
+      def get_entity_ref_as(type : T.class, persistence_id : Persistence::Id) : ActorRef(T) forall T
+        get_entity_ref(persistence_id).as(ActorRef(T))
+      end
     end
-  end
 
   class EventSourcing < ExtensionId(EventSourcingExtension)
     def create(system : AbstractActorSystem) : EventSourcingExtension
