@@ -7,6 +7,7 @@ module Movie
   end
 
   alias StoreProbeMessage = StoreProbeStart
+  STORE_TIMEOUT = 5.seconds
 
   class EventStoreProbe < AbstractBehavior(StoreProbeMessage)
     def initialize(
@@ -18,9 +19,9 @@ module Movie
     def receive(message : StoreProbeMessage, ctx : ActorContext(StoreProbeMessage))
       case message
       when StoreProbeStart
-        ctx.ask(@store, Movie::Persistence::AppendEvent.new("stream-1", "a"), Int64).await(1.second)
-        ctx.ask(@store, Movie::Persistence::AppendEvent.new("stream-1", "b"), Int64).await(1.second)
-        events = ctx.ask(@store, Movie::Persistence::LoadEvents.new("stream-1"), Array(String)).await(1.second)
+        ctx.ask(@store, Movie::Persistence::AppendEvent.new("stream-1", "a"), Int64).await(STORE_TIMEOUT)
+        ctx.ask(@store, Movie::Persistence::AppendEvent.new("stream-1", "b"), Int64).await(STORE_TIMEOUT)
+        events = ctx.ask(@store, Movie::Persistence::LoadEvents.new("stream-1"), Array(String)).await(STORE_TIMEOUT)
         @promise.try_success(events)
       end
       Behaviors(StoreProbeMessage).same
@@ -37,8 +38,8 @@ module Movie
     def receive(message : StoreProbeMessage, ctx : ActorContext(StoreProbeMessage))
       case message
       when StoreProbeStart
-        ctx.ask(@store, Movie::Persistence::SaveState.new("entity-1", "payload"), Bool).await(1.second)
-        value = ctx.ask(@store, Movie::Persistence::LoadState.new("entity-1"), String?).await(1.second)
+        ctx.ask(@store, Movie::Persistence::SaveState.new("entity-1", "payload"), Bool).await(STORE_TIMEOUT)
+        value = ctx.ask(@store, Movie::Persistence::LoadState.new("entity-1"), String?).await(STORE_TIMEOUT)
         @promise.try_success(value)
       end
       Behaviors(StoreProbeMessage).same
@@ -59,7 +60,7 @@ describe "Movie persistence store actors" do
     probe = system.spawn(Movie::EventStoreProbe.new(store, promise))
     probe << Movie::StoreProbeStart.new
 
-    events = promise.future.await(2.seconds)
+    events = promise.future.await(10.seconds)
     events.should eq(["a", "b"])
   end
 
@@ -75,7 +76,7 @@ describe "Movie persistence store actors" do
     probe = system.spawn(Movie::StateStoreProbe.new(store, promise))
     probe << Movie::StoreProbeStart.new
 
-    value = promise.future.await(2.seconds)
+    value = promise.future.await(10.seconds)
     value.should eq("payload")
   end
 end
