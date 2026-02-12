@@ -95,7 +95,33 @@ module Agency
     end
   end
 
-  alias ManagerMessage = RegisterTool | RegisterToolBehavior | RegisterExecTool | UnregisterTool | RegisterToolSet | RunPrompt | UpdateAgentToolsetAllowlist | GetAllowedToolSets
+  struct AttachAgentSkills
+    getter agent_id : String
+    getter skill_ids : Array(String)
+    getter reply_to : Movie::ActorRef(Bool)?
+
+    def initialize(@agent_id : String, @skill_ids : Array(String), @reply_to : Movie::ActorRef(Bool)? = nil)
+    end
+  end
+
+  struct DetachAgentSkills
+    getter agent_id : String
+    getter skill_ids : Array(String)
+    getter reply_to : Movie::ActorRef(Bool)?
+
+    def initialize(@agent_id : String, @skill_ids : Array(String), @reply_to : Movie::ActorRef(Bool)? = nil)
+    end
+  end
+
+  struct GetAgentSkills
+    getter agent_id : String
+    getter reply_to : Movie::ActorRef(Array(String))
+
+    def initialize(@agent_id : String, @reply_to : Movie::ActorRef(Array(String)))
+    end
+  end
+
+  alias ManagerMessage = RegisterTool | RegisterToolBehavior | RegisterExecTool | UnregisterTool | RegisterToolSet | RunPrompt | UpdateAgentToolsetAllowlist | GetAllowedToolSets | AttachAgentSkills | DetachAgentSkills | GetAgentSkills
 
   # Actor that owns sessions and tool registry.
   class AgentManagerActor < Movie::AbstractBehavior(ManagerMessage)
@@ -117,11 +143,12 @@ module Agency
       client : LLMClient,
       default_model : String = "gpt-3.5-turbo",
       supervision : Movie::SupervisionConfig = DEFAULT_INFRA_SUPERVISION,
-      session_supervision : Movie::SupervisionConfig = DEFAULT_SESSION_SUPERVISION
+      session_supervision : Movie::SupervisionConfig = DEFAULT_SESSION_SUPERVISION,
+      skill_registry : Movie::ActorRef(SkillRegistryMessage)? = nil
     ) : Movie::AbstractBehavior(ManagerMessage)
       Movie::Behaviors(ManagerMessage).setup do |ctx|
         llm_gateway = ctx.spawn(LLMGateway.behavior(client), Movie::RestartStrategy::RESTART, supervision, "llm-gateway")
-        AgentManagerActor.new(llm_gateway, default_model, supervision, session_supervision)
+        AgentManagerActor.new(llm_gateway, default_model, supervision, session_supervision, skill_registry)
       end
     end
 
@@ -129,7 +156,8 @@ module Agency
       @llm_gateway : Movie::ActorRef(LLMRequest),
       @default_model : String,
       @agent_supervision : Movie::SupervisionConfig,
-      @session_supervision : Movie::SupervisionConfig
+      @session_supervision : Movie::SupervisionConfig,
+      @skill_registry : Movie::ActorRef(SkillRegistryMessage)?
     )
       @agents = {} of String => Movie::ActorRef(AgentMessage)
       @toolset_defs = {} of String => ToolSetDefinition
@@ -180,6 +208,15 @@ module Agency
       when GetAllowedToolSets
         allowed = allowed_toolsets_for(message.agent_id, ctx)
         message.reply_to << allowed
+      when AttachAgentSkills
+        agent = ensure_agent(message.agent_id, ctx)
+        agent << AttachSkills.new(message.skill_ids, message.reply_to)
+      when DetachAgentSkills
+        agent = ensure_agent(message.agent_id, ctx)
+        agent << DetachSkills.new(message.skill_ids, message.reply_to)
+      when GetAgentSkills
+        agent = ensure_agent(message.agent_id, ctx)
+        agent << GetAttachedSkills.new(message.reply_to)
       end
       Movie::Behaviors(ManagerMessage).same
     end
@@ -193,14 +230,17 @@ module Agency
       policy_name = cfg.get_string("agency.agents.#{id}.memory_policy", default_policy)
       policy_name = nil if policy_name.empty?
       allowed_toolsets = allowed_toolsets_for(id, ctx)
-      profile = AgentProfile.new(id, @default_model, MAX_STEPS, MAX_HISTORY, policy_name, allowed_toolsets)
+      default_skills = cfg.get_string_array("agency.agents.default.skills", [] of String)
+      skill_ids = cfg.get_string_array("agency.agents.#{id}.skills", default_skills)
+      profile = AgentProfile.new(id, @default_model, MAX_STEPS, MAX_HISTORY, policy_name, allowed_toolsets, skill_ids)
       agent = ctx.spawn(
         AgentActor.behavior(
           profile,
           @llm_gateway,
           @toolset_defs.values,
           @agent_supervision,
-          @session_supervision
+          @session_supervision,
+          @skill_registry
         ),
         Movie::RestartStrategy::RESTART,
         @agent_supervision
@@ -286,7 +326,7 @@ module Agency
       supervision : Movie::SupervisionConfig = DEFAULT_INFRA_SUPERVISION,
       session_supervision : Movie::SupervisionConfig = DEFAULT_SESSION_SUPERVISION
     ) : AgentManager
-      ref = system.spawn(AgentManagerActor.behavior(client, default_model, supervision, session_supervision))
+      ref = system.spawn(AgentManagerActor.behavior(client, default_model, supervision, session_supervision, skill_registry))
       new(system, ref, skill_registry)
     end
 
@@ -334,6 +374,27 @@ module Agency
       promise = Movie::Promise(Array(String)).new
       receiver = @system.spawn(PromiseReceiver(Array(String)).new(promise))
       @ref << GetAllowedToolSets.new(agent_id, receiver)
+      promise.future
+    end
+
+    def attach_skills(agent_id : String, skill_ids : Array(String)) : Movie::Future(Bool)
+      promise = Movie::Promise(Bool).new
+      receiver = @system.spawn(PromiseReceiver(Bool).new(promise))
+      @ref << AttachAgentSkills.new(agent_id, skill_ids, receiver)
+      promise.future
+    end
+
+    def detach_skills(agent_id : String, skill_ids : Array(String)) : Movie::Future(Bool)
+      promise = Movie::Promise(Bool).new
+      receiver = @system.spawn(PromiseReceiver(Bool).new(promise))
+      @ref << DetachAgentSkills.new(agent_id, skill_ids, receiver)
+      promise.future
+    end
+
+    def agent_skills(agent_id : String) : Movie::Future(Array(String))
+      promise = Movie::Promise(Array(String)).new
+      receiver = @system.spawn(PromiseReceiver(Array(String)).new(promise))
+      @ref << GetAgentSkills.new(agent_id, receiver)
       promise.future
     end
 

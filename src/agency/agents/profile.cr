@@ -6,6 +6,7 @@ module Agency
     getter max_history : Int32
     getter memory_policy_name : String?
     getter allowed_toolsets : Array(String)
+    getter skill_ids : Array(String)
 
     def initialize(
       @id : String,
@@ -13,7 +14,8 @@ module Agency
       @max_steps : Int32 = 8,
       @max_history : Int32 = 50,
       @memory_policy_name : String? = nil,
-      @allowed_toolsets : Array(String) = [] of String
+      @allowed_toolsets : Array(String) = [] of String,
+      @skill_ids : Array(String) = [] of String
     )
     end
   end

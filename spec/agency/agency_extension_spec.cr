@@ -27,6 +27,17 @@ private class ToolCaptureLLMClient < Agency::LLMClient
   end
 end
 
+private class PromptCaptureLLMClient < Agency::LLMClient
+  def initialize(@channel : Channel(Array(Agency::Message)), @response : String)
+    super("dummy-key")
+  end
+
+  def chat(messages : Array(Agency::Message), tools : Array(Agency::ToolSpec), model : String = "gpt-3.5-turbo") : String
+    @channel.send(messages)
+    @response
+  end
+end
+
 private class NoopTool < Movie::AbstractBehavior(Agency::ToolCall)
   def receive(message, ctx)
     if sender = ctx.sender.as?(Movie::ActorRef(Agency::ToolResult))
@@ -76,5 +87,28 @@ describe Agency::AgencyExtension do
     extension.update_allowed_toolsets("agent-1", ["local"]).await(6.seconds)
     extension.run("second", "s2", "gpt-3.5-turbo", "agent-1").await(6.seconds)
     channel.receive.includes?("local.echo").should be_true
+  end
+
+  it "applies skill snapshot per session" do
+    system = Agency.spec_system
+    messages = Channel(Array(Agency::Message)).new(4)
+    client = PromptCaptureLLMClient.new(messages, {"type" => "final", "content" => "ok"}.to_json)
+    source = MutableSkillSource.new
+    source.set([Agency::Skill.new("s1", "first", "SKILL-S1", [] of Agency::ToolSpec)])
+    extension = Agency::AgencyExtension.new(system, client, "gpt-3.5-turbo", source)
+
+    extension.attach_skills("agent-1", ["s1"]).await(6.seconds).should be_true
+    extension.run("first", "session-a", "gpt-3.5-turbo", "agent-1").await(6.seconds)
+    first_messages = messages.receive
+    first_messages.any? { |m| m.role == Agency::Role::System && m.content == "SKILL-S1" }.should be_true
+
+    extension.detach_skills("agent-1", ["s1"]).await(6.seconds).should be_true
+    extension.run("second", "session-a", "gpt-3.5-turbo", "agent-1").await(6.seconds)
+    second_messages = messages.receive
+    second_messages.any? { |m| m.role == Agency::Role::System && m.content == "SKILL-S1" }.should be_true
+
+    extension.run("third", "session-b", "gpt-3.5-turbo", "agent-1").await(6.seconds)
+    third_messages = messages.receive
+    third_messages.any? { |m| m.role == Agency::Role::System && m.content == "SKILL-S1" }.should be_false
   end
 end

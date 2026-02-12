@@ -8,10 +8,13 @@ require "../tools/toolset_definition"
 require "../context/builder"
 require "./run"
 require "../memory/policy"
+require "../skills/registry"
 
 module Agency
   # Session actor that owns conversational history and spawns runs per prompt.
   class AgentSession < Movie::AbstractBehavior(SessionMessage)
+    @skill_system_messages : Array(Message)
+
     def self.behavior(
       session_id : String,
       llm_gateway : Movie::ActorRef(LLMRequest),
@@ -20,6 +23,7 @@ module Agency
       memory : Movie::ActorRef(MemoryMessage)? = nil,
       max_steps : Int32 = 8,
       max_history : Int32 = 50,
+      skills : Array(Skill) = [] of Skill,
       memory_policy : MemoryPolicy? = nil
     ) : Movie::AbstractBehavior(SessionMessage)
       Movie::Behaviors(SessionMessage).setup do |ctx|
@@ -61,11 +65,25 @@ module Agency
 
         toolset_refs = {} of String => Movie::ActorRef(ToolSetMessage)
         tool_list = [] of ToolSpec
+        known_tools = {} of String => Bool
         toolsets.each do |definition|
           ref = definition.resolve(ctx)
           toolset_refs[definition.prefix] = ref
           definition.tools.each do |spec|
-            tool_list << ToolSpec.new("#{definition.prefix}.#{spec.name}", spec.description, spec.parameters)
+            name = "#{definition.prefix}.#{spec.name}"
+            next if known_tools.has_key?(name)
+            known_tools[name] = true
+            tool_list << ToolSpec.new(name, spec.description, spec.parameters)
+          end
+        end
+        skill_prompts = [] of String
+        skills.each do |skill|
+          prompt = skill.system_prompt.strip
+          skill_prompts << prompt unless prompt.empty?
+          skill.tools.each do |spec|
+            next if known_tools.has_key?(spec.name)
+            known_tools[spec.name] = true
+            tool_list << spec
           end
         end
         tool_router = ctx.spawn(
@@ -75,7 +93,7 @@ module Agency
           "tool-router"
         )
 
-        AgentSession.new(session_id, llm_gateway, tool_router, tool_list, builder_ref, mem_ref, max_steps, max_history)
+        AgentSession.new(session_id, llm_gateway, tool_router, tool_list, builder_ref, mem_ref, max_steps, max_history, skill_prompts)
       end
     end
 
@@ -87,9 +105,11 @@ module Agency
       @context_builder : Movie::ActorRef(ContextMessage)?,
       @memory : Movie::ActorRef(MemoryMessage)?,
       @max_steps : Int32 = 8,
-      @max_history : Int32 = 50
+      @max_history : Int32 = 50,
+      skill_prompts : Array(String) = [] of String
     )
       @history = [] of Message
+      @skill_system_messages = skill_prompts.map { |prompt| Message.new(Role::System, prompt) }
       @pending_reply = nil.as(Movie::ActorRef(String)?)
       @active_run = nil.as(Movie::ActorRef(RunMessage)?)
       @history_loaded = false
@@ -150,7 +170,7 @@ module Agency
           @context_builder,
           message.model,
           @max_steps,
-          @history,
+          run_history,
           @user_id,
           @project_id
         ),
@@ -206,6 +226,11 @@ module Agency
       if excess > 0
         @history.shift(excess)
       end
+    end
+
+    private def run_history : Array(Message)
+      return @history.dup if @skill_system_messages.empty?
+      @skill_system_messages + @history
     end
 
     private def store_messages(delta : Array(Message))

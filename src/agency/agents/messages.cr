@@ -66,6 +66,29 @@ module Agency
     end
   end
 
+  struct AttachSkills
+    getter skill_ids : Array(String)
+    getter reply_to : Movie::ActorRef(Bool)?
+
+    def initialize(@skill_ids : Array(String), @reply_to : Movie::ActorRef(Bool)? = nil)
+    end
+  end
+
+  struct DetachSkills
+    getter skill_ids : Array(String)
+    getter reply_to : Movie::ActorRef(Bool)?
+
+    def initialize(@skill_ids : Array(String), @reply_to : Movie::ActorRef(Bool)? = nil)
+    end
+  end
+
+  struct GetAttachedSkills
+    getter reply_to : Movie::ActorRef(Array(String))?
+
+    def initialize(@reply_to : Movie::ActorRef(Array(String))? = nil)
+    end
+  end
+
   struct AgentState
     getter agent_id : String
     getter sessions : Array(String)
@@ -151,6 +174,6 @@ module Agency
     end
   end
 
-  alias AgentMessage = RunPrompt | StartSession | StopSession | GetAgentState | ToolSetRegisterExec | ToolSetRegisterActor | ToolSetUnregister | UpdateAllowedToolSets | RegisterToolSetDefinition
+  alias AgentMessage = RunPrompt | StartSession | StopSession | GetAgentState | AttachSkills | DetachSkills | GetAttachedSkills | ToolSetRegisterExec | ToolSetRegisterActor | ToolSetUnregister | UpdateAllowedToolSets | RegisterToolSetDefinition
   alias SessionMessage = SessionPrompt | RunCompleted | RunFailed | GetSessionState | HistoryLoaded
 end

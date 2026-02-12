@@ -66,6 +66,18 @@ module Agency
       @manager.update_allowed_toolsets(agent_id, allowed_toolsets)
     end
 
+    def attach_skills(agent_id : String, skill_ids : Array(String)) : Movie::Future(Bool)
+      @manager.attach_skills(agent_id, skill_ids)
+    end
+
+    def detach_skills(agent_id : String, skill_ids : Array(String)) : Movie::Future(Bool)
+      @manager.detach_skills(agent_id, skill_ids)
+    end
+
+    def agent_skills(agent_id : String) : Movie::Future(Array(String))
+      @manager.agent_skills(agent_id)
+    end
+
     def register_mcp_server(
       agent_id : String,
       command : String,
