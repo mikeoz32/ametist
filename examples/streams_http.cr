@@ -2,12 +2,13 @@ require "json"
 require "http/server"
 require "../src/movie"
 
-alias Streams = Movie::Streams
+alias Streams = Movie::Streams::Typed
+alias Elem = Int32
 
 # Reuse a single actor system for all stream materializations.
-STREAM_SYSTEM = Movie::ActorSystem(Streams::MessageBase).new(
-  Movie::Behaviors(Streams::MessageBase).setup do
-    Movie::Behaviors(Streams::MessageBase).same
+STREAM_SYSTEM = Movie::ActorSystem(Streams::MessageBase(Elem)).new(
+  Movie::Behaviors(Streams::MessageBase(Elem)).setup do
+    Movie::Behaviors(Streams::MessageBase(Elem)).same
   end
 )
 
@@ -18,11 +19,12 @@ STREAM_SYSTEM = Movie::ActorSystem(Streams::MessageBase).new(
 def stream_numbers(n : Int32, io : IO)
   count = n < 0 ? 0 : n
   pipeline = Streams.build_collecting_pipeline_in(
+    Elem,
     STREAM_SYSTEM,
-    Streams::ManualSource.new,
+    Streams::ManualSource(Elem).new,
     [
-      Streams::MapFlow.new { |v| v.as(Int32) * 2 },
-      Streams::TakeFlow.new(count.to_u64),
+      Streams::MapFlow(Elem).new { |v| v * 2 },
+      Streams::TakeFlow(Elem).new(count.to_u64),
     ],
     initial_demand: count.to_u64,
     channel_capacity: 16
@@ -34,15 +36,15 @@ def stream_numbers(n : Int32, io : IO)
   # Produce on a separate fiber so the HTTP handler only reads/flushes.
   spawn do
     (1..count).each do |i|
-      source << Streams::Produce.new(i)
+      source << Streams::Produce(Elem).new(i)
     end
-    source << Streams::OnComplete.new
+    source << Streams::OnComplete(Elem).new
   end
 
   io << "{\"count\":#{count}}\n" if count == 0
 
   count.times do
-    val = out.receive.as(Int32)
+    val = out.receive
     io << {value: val}.to_json << "\n"
     io.flush
   end

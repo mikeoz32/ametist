@@ -1,13 +1,15 @@
 require "../src/movie"
 
-alias Streams = Movie::Streams
+alias Streams = Movie::Streams::Typed
+alias Elem = Int32
 
 pipeline = Streams.build_collecting_pipeline(
-  Streams::ManualSource.new,
+  Elem,
+  Streams::ManualSource(Elem).new,
   [
-    Streams::MapFlow.new { |v| v.as(Int32) * 2 },
-    Streams::FilterFlow.new { |v| v.as(Int32).even? },
-    Streams::TakeFlow.new(3u64),
+    Streams::MapFlow(Elem).new { |v| v * 2 },
+    Streams::FilterFlow(Elem).new { |v| v.even? },
+    Streams::TakeFlow(Elem).new(3u64),
   ],
   initial_demand: 3u64
 )
@@ -15,12 +17,12 @@ pipeline = Streams.build_collecting_pipeline(
 source = pipeline.source
 out = pipeline.out_channel.not_nil!
 
-source << Streams::Produce.new(1)
-source << Streams::Produce.new(2)
-source << Streams::Produce.new(3)
-source << Streams::Produce.new(4)
-source << Streams::Produce.new(5)
-source << Streams::OnComplete.new
+source << Streams::Produce(Elem).new(1)
+source << Streams::Produce(Elem).new(2)
+source << Streams::Produce(Elem).new(3)
+source << Streams::Produce(Elem).new(4)
+source << Streams::Produce(Elem).new(5)
+source << Streams::OnComplete(Elem).new
 
 3.times do
   puts "got #{out.receive}"

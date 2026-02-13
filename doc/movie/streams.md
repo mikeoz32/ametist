@@ -3,7 +3,8 @@
 ## Goals
 - Backpressure-first: downstream explicitly requests demand; upstream never overruns demand.
 - Clear terminals: completion, error, cancel are terminal; no signals after terminal.
-- Simple single-subscription per stage for MVP; multi-subscription can be revisited later.
+- Keep single-subscription semantics for linear Source/Flow/Sink stages.
+- Support multi-subscriber fan-out via `BroadcastHub`.
 
 ## Message types
 Control/Data messages exchanged between adjacent stages (upstream -> downstream unless noted):
@@ -11,6 +12,8 @@ Control/Data messages exchanged between adjacent stages (upstream -> downstream 
 - `OnSubscribe(subscription)` (upstream -> downstream): carries a handle to send `Request(n)` / `Cancel` upstream.
 - `Request(n : UInt64)` (downstream -> upstream): additive demand; `n > 0`. Zero is ignored.
 - `Cancel` (downstream -> upstream): terminal from downstream; upstream must stop sending and may clean up.
+- `SubscriptionRequest(n, subscriber)` (downstream -> upstream): subscriber-scoped demand used by `BroadcastHub`.
+- `SubscriptionCancel(subscriber)` (downstream -> upstream): subscriber-scoped cancel used by `BroadcastHub`.
 - `OnNext(elem)` (upstream -> downstream): data element; allowed only when outstanding demand > 0.
 - `OnComplete` (upstream -> downstream): terminal successful completion.
 - `OnError(error)` (upstream -> downstream): terminal failure; error is opaque payload.
@@ -20,7 +23,8 @@ Control/Data messages exchanged between adjacent stages (upstream -> downstream 
 - Additive demand: `Request(n)` adds to outstanding demand (clamp at UInt64::MAX to avoid overflow).
 - Non-positive requests: `Request(0)` is ignored; negative not allowed by type.
 - Single terminal: after any of `OnComplete` / `OnError` / `Cancel`, no further signals (including `OnNext`, `Request`, or another terminal) are processed or emitted.
-- Single subscription (MVP): each stage accepts at most one `Subscribe`; further attempts are rejected (e.g., ignored or `OnError` once) — precise rejection TBD in implementation.
+- Single subscription: linear Source/Flow/Sink stages accept at most one `Subscribe`.
+- Multi-subscriber fan-out: `BroadcastHub` accepts many subscribers with independent demand/cancel state.
 - Late signals: signals arriving after terminal are dropped.
 - Ordering: signals are delivered in send order per link.
 - Backpressure hop-by-hop: if downstream is slow, upstream must pause until it receives more `Request`.
@@ -28,6 +32,7 @@ Control/Data messages exchanged between adjacent stages (upstream -> downstream 
 ## Stage responsibilities
 - Source: owns production; sends `OnSubscribe` then waits for `Request`; emits up to demand; sends `OnComplete` when done; on error sends `OnError`; on `Cancel` stops promptly.
 - Flow: on `OnSubscribe`, returns a downstream subscription; forwards `Request` upstream respecting its own buffering (MVP: no extra buffering beyond demand). Transforms/filters elements; honours demand and terminals.
+- BroadcastHub: one upstream, many downstream subscribers. Tracks per-subscriber demand and propagates an upstream demand equal to max downstream outstanding demand.
 - Sink: initiates `Subscribe`; manages demand policy (e.g., request batch-by-batch); handles `OnNext`/`OnComplete`/`OnError`; may `Cancel` proactively.
 
 ## Error and cancellation
@@ -37,6 +42,10 @@ Control/Data messages exchanged between adjacent stages (upstream -> downstream 
 ## Buffering (MVP)
 - Default: zero/strict buffering in Flow — only emit when demand present; may hold at most one in-flight transform step.
 - If implementation adds small buffer, it must still respect outstanding demand and not overrun requested total.
+
+## Element types
+- Streams are typed via `Movie::Streams::Typed`; every stage/message is parameterized by `T`.
+- For mixed payloads, define your own union (for example `Nil | Int32 | Int64 | Float64 | String | Bool | Symbol | JSON::Any`).
 
 ## Rejection / violations (to decide in impl)
 - If `Request` arrives before `OnSubscribe`, either queue until subscribed or drop with warning.
@@ -58,8 +67,8 @@ Control/Data messages exchanged between adjacent stages (upstream -> downstream 
 - Re-materialization: calling `.to` again builds a new graph; prior refs are independent.
 
 ## Current builder helper (MVP)
-- `Movie::Streams.build_pipeline(source, flows, sink, initial_demand = 0)` wires `source -> flows -> sink`, auto-sends `Subscribe` for each hop, and optionally primes the sink with initial demand (creates its own actor system).
-- `Movie::Streams.build_pipeline_in(system, source, flows, sink, initial_demand = 0)` does the same but reuses an existing `ActorSystem` (recommended for servers/long-lived apps).
+- `Movie::Streams::Typed.build_pipeline(T, source, flows, sink, initial_demand = 0)` wires `source -> flows -> sink`, auto-sends `Subscribe` for each hop, and optionally primes the sink with initial demand (creates its own actor system).
+- `Movie::Streams::Typed.build_pipeline_in(T, system, source, flows, sink, initial_demand = 0)` does the same but reuses an existing `ActorSystem` (recommended for servers/long-lived apps).
 - Collect/fold variants: `build_collecting_pipeline[_in]` (returns `out_channel`) and `build_fold_pipeline[_in]` (returns `Future(acc)`).
 - Returns `MaterializedPipeline` with:
 	- `source`/`sink` refs for pushing `Produce`/`Request`/terminals.

@@ -14,7 +14,7 @@ require "./movie/future"
 require "./movie/scheduler"
 require "./movie/ask"
 require "./movie/pipe"
-require "./movie/streams"
+require "./movie/streams_typed"
 
 module Movie
   # Movie is an actor framework for Crystal
